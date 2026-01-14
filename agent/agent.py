@@ -6,9 +6,9 @@ import os
 import re
 import json
 from datetime import datetime
-from dotenv import load_env
+from dotenv import load_dotenv
 
-load_env()
+load_dotenv()
 
 
 SERVER_URL = os.getenv("SERVER_URL", "http://127.0.0.1:5555")
