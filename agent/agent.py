@@ -6,11 +6,15 @@ import os
 import re
 import json
 from datetime import datetime
+from getenv import load_env
 
-SERVER_URL = "http://127.0.0.1:5555"
+load_env()
+
+
+SERVER_URL = os.getenv("SERVER_URL", "http://127.0.0.1:5555")
 HOSTNAME = socket.gethostname()
 IP_ADDRESS = socket.gethostbyname(HOSTNAME)
-AUDIT_LOG_FILE = "/var/log/audit/audit.log"
+AUDIT_LOG_FILE = os.getenv("AUDIT_LOG_FILE", "/var/log/audit/audit.log")
 BATCH_SIZE = 5
 CHECK_INTERVAL = 5
 
@@ -25,6 +29,7 @@ class SecurityAgent:
             subprocess.run(cmd, shell=True, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except subprocess.CalledProcessError:
             pass
+        
 
     def heartbeat(self):
         try:
@@ -150,6 +155,14 @@ class SecurityAgent:
                 if len(self.log_buffer) >= BATCH_SIZE:
                     self.flush_logs()
 
+    def ensure_dependencies(self):
+        if subprocess.call("which auditctl", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) != 0:
+            print("[*] Installing auditd...")
+            self.run_command("apt-get update && apt-get install -y auditd")
+            self.run_command("systemctl start auditd")
+        else:
+            print("[+] auditd is already installed.")
+
 if __name__ == "__main__":
     if os.geteuid() != 0:
         print("CRITICAL: Agent must run as root to access audit subsystem.")
@@ -157,6 +170,7 @@ if __name__ == "__main__":
         
     agent = SecurityAgent()
     print(f"[*] Starting KSO Agent on {HOSTNAME}...")
+    agent.ensure_dependencies()
     
     # Pierwsza rejestracja
     if agent.heartbeat():

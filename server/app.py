@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify
-from models import db, Host, LogEntry, MonitoringRule, host_rules, Severity
+from server.models import db, Host, LogEntry, MonitoringRule, host_rules, Severity
 import datetime
 import os
 from dotenv import load_dotenv
