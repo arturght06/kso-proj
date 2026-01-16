@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-SERVER_URL = os.getenv("SERVER_URL", "http://vm-server:5555")
+SERVER_URL = os.getenv("SERVER_URL", "http://vm-serwer:5555")
 HOSTNAME = socket.gethostname()
 IP_ADDRESS = socket.gethostbyname(HOSTNAME)
 AUDIT_LOG_FILE = os.getenv("AUDIT_LOG_FILE", "/var/log/audit/audit.log")
