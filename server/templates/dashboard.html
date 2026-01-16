@@ -18,7 +18,11 @@
             <tbody>
                 {% for host in hosts %}
                 <tr>
-                    <td>{{ host.hostname }}</td>
+                    <td>
+                        <a href="{{ url_for('host_details', host_id=host.id) }}" style="font-weight: bold; color: #2980b9; text-decoration: none;">
+                            {{ host.hostname }}
+                        </a>
+                    </td>
                     <td>{{ host.ip_address }}</td>
                     <td>{{ host.last_heartbeat.strftime('%Y-%m-%d %H:%M:%S') }}</td>
                     <td>

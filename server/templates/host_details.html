@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div style="margin-bottom: 20px;">
+    <a href="{{ url_for('dashboard') }}" class="btn" style="background: #95a5a6;">&larr; Back to Dashboard</a>
+</div>
+
+<h2>Host: <span style="color: #2980b9;">{{ host.hostname }}</span></h2>
+<p>IP: {{ host.ip_address }} | Last Seen: {{ host.last_heartbeat.strftime('%Y-%m-%d %H:%M:%S') }}</p>
+
+<div class="card">
+    <h3>Audit Rules Configuration</h3>
+    <p>Agenci pobiorą te zmiany przy następnym <i>heartbeat</i> (max 5s).</p>
+    
+    <table>
+        <thead>
+            <tr>
+                <th>Path</th>
+                <th>Permissions</th>
+                <th>Key</th>
+                <th>Action</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for rule in host.rules %}
+            <tr>
+                <td>{{ rule.path }}</td>
+                <td>{{ rule.permissions }}</td>
+                <td>{{ rule.key_label }}</td>
+                <td>
+                    <form action="{{ url_for('delete_rule_from_host', host_id=host.id, rule_id=rule.id) }}" method="POST" style="display:inline;">
+                        <button type="submit" style="background: #e74c3c; color: white; border: none; padding: 5px 10px; cursor: pointer; border-radius: 4px;">Remove</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <h4 style="margin-top: 20px;">Add New Rule</h4>
+    <form action="{{ url_for('add_rule_to_host', host_id=host.id) }}" method="POST" style="display: flex; gap: 10px;">
+        <input type="text" name="path" placeholder="/path/to/monitor" required style="flex: 2; padding: 8px;">
+        <select name="permissions" style="padding: 8px;">
+            <option value="wa">Write/Attribute (wa)</option>
+            <option value="rwxa">Read/Write/Exec/Attr (rwxa)</option>
+            <option value="x">Execute (x)</option>
+        </select>
+        <input type="text" name="key_label" placeholder="log_key_name" required style="flex: 1; padding: 8px;">
+        <button type="submit" class="btn" style="background: #27ae60;">Add Rule</button>
+    </form>
+</div>
+
+<div class="card">
+    <h3>Recent Logs for {{ host.hostname }}</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>Time</th>
+                <th>Program</th>
+                <th>Message</th>
+                <th>Severity</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for log in logs %}
+            <tr>
+                <td>{{ log.timestamp.strftime('%H:%M:%S') }}</td>
+                <td>{{ log.program }}</td>
+                <td style="font-family: monospace; font-size: 0.9em;">{{ log.message[:120] }}...</td>
+                <td style="color: {{ 'red' if log.severity.value == 'critical' else 'black' }}">{{ log.severity.value }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

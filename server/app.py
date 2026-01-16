@@ -1,7 +1,7 @@
 from flask import Flask, request, jsonify, render_template, redirect, url_for, flash
 from flask_login import LoginManager, login_user, login_required, logout_user, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
-from models import db, Host, LogEntry, MonitoringRule, User, Severity
+from models import db, Host, LogEntry, MonitoringRule, User, Severity, MonitoringRule
 import datetime
 import os
 from dotenv import load_dotenv
@@ -58,6 +58,55 @@ def dashboard():
 def logout():
     logout_user()
     return redirect(url_for('login'))
+
+
+
+@app.route('/host/<int:host_id>')
+@login_required
+def host_details(host_id):
+    host = Host.query.get_or_404(host_id)
+    # last 50 logs for this host
+    logs = LogEntry.query.filter_by(host_id=host.id).order_by(LogEntry.timestamp.desc()).limit(50).all()
+    return render_template('host_details.html', host=host, logs=logs)
+
+@app.route('/host/<int:host_id>/add_rule', methods=['POST'])
+@login_required
+def add_rule_to_host(host_id):
+    host = Host.query.get_or_404(host_id)
+    
+    path = request.form.get('path')
+    permissions = request.form.get('permissions')
+    key = request.form.get('key_label')
+    
+    # check if rule already exists
+    rule = MonitoringRule.query.filter_by(path=path, permissions=permissions, key_label=key).first()
+    
+    if not rule:
+        rule = MonitoringRule(path=path, permissions=permissions, key_label=key)
+        db.session.add(rule)
+    
+    # associate rule with host
+    if rule not in host.rules:
+        host.rules.append(rule)
+        db.session.commit()
+        flash('Rule added successfully. Agent will sync shortly.', 'success')
+    else:
+        flash('Rule already active on this host.', 'info')
+        
+    return redirect(url_for('host_details', host_id=host_id))
+
+@app.route('/host/<int:host_id>/delete_rule/<int:rule_id>', methods=['POST'])
+@login_required
+def delete_rule_from_host(host_id, rule_id):
+    host = Host.query.get_or_404(host_id)
+    rule = MonitoringRule.query.get_or_404(rule_id)
+    
+    if rule in host.rules:
+        host.rules.remove(rule)
+        db.session.commit()
+        flash('Rule removed. Agent will stop tracking this path.', 'warning')
+        
+    return redirect(url_for('host_details', host_id=host_id))
 
 
 
