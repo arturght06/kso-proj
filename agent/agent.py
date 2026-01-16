@@ -21,8 +21,12 @@ CHECK_INTERVAL = 5
 class SecurityAgent:
     def __init__(self):
         self.rules = {}
+        self.active_rule_signatures = set()
         self.log_buffer = []
         self.session = requests.Session()
+    
+    def _get_rule_signature(self, rule):
+        return f"{rule['path']}|{rule['permissions']}|{rule['key']}"
 
     def run_command(self, cmd):
         try:
@@ -55,20 +59,34 @@ class SecurityAgent:
             print(f"[-] Config sync failed: {e}")
 
     def apply_audit_rules(self, rules_list):
-        print("[*] Applying new audit rules...")
-        self.run_command("auditctl -D")
-        
-        active_keys = []
+        incoming_signatures = set()
+        incoming_rules_map = {}
+
         for rule in rules_list:
+            sig = self._get_rule_signature(rule)
+            incoming_signatures.add(sig)
+            incoming_rules_map[sig] = rule
+        
+        to_add = incoming_signatures - self.active_rule_signatures
+
+        if not to_add:
+            return
+
+        print("[*] Applying new audit rules...")
+        
+        for sig in to_add:
+            rule = incoming_rules_map[sig]
+
             path = rule['path']
             perm = rule['permissions']
             key = rule['key']
             cmd = f"auditctl -w {path} -p {perm} -k {key}"
+
             self.run_command(cmd)
-            active_keys.append(key)
-            self.rules[key] = rule
+            self.active_rule_signatures.add(sig)
+            print(f"[+] Applied rule: {key}")
         
-        print(f"[+] Applied {len(active_keys)} rules: {active_keys}")
+        print(f"[+] Applied {len(to_add)} new rules")
 
     def parse_audit_line(self, line):
         if 'key=' not in line:
@@ -79,7 +97,8 @@ class SecurityAgent:
             return None
         
         key = key_match.group(1)
-        if key not in self.rules:
+        
+        if not any(key in sig for sig in self.active_rule_signatures):
             return None
 
         log_entry = {
@@ -171,6 +190,9 @@ if __name__ == "__main__":
     agent = SecurityAgent()
     print(f"[*] Starting KSO Agent on {HOSTNAME}...")
     agent.ensure_dependencies()
+
+    agent.run_command("auditctl -D")
+
     
     # Pierwsza rejestracja
     if agent.heartbeat():
