@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div style="display: flex; justify-content: center; margin-top: 50px;">
+    <div class="card" style="width: 400px;">
+        <h2 style="margin-top: 0;">Login</h2>
+        <form method="POST">
+            <div style="margin-bottom: 15px;">
+                <label for="username" style="display: block; margin-bottom: 5px;">Username</label>
+                <input type="text" name="username" id="username" required style="width: 100%; padding: 8px; box-sizing: border-box;">
+            </div>
+            <div style="margin-bottom: 20px;">
+                <label for="password" style="display: block; margin-bottom: 5px;">Password</label>
+                <input type="password" name="password" id="password" required style="width: 100%; padding: 8px; box-sizing: border-box;">
+            </div>
+            <button type="submit" class="btn" style="width: 100%;">Sign In</button>
+        </form>
+    </div>
+</div>
+{% endblock %}
