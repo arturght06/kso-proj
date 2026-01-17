@@ -20,56 +20,68 @@ db.init_app(app)
 
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
-last_processed_log_id = 0
-host_status_cache = {}  # {host_id: boolean_is_online}
 
-def init_globals():
-    """Ustawia początkowy ID logów na max, żeby nie wysyłać starych logów przy restarcie."""
-    global last_processed_log_id
+# --- SOCKET.IO EVENTS (Endepointy Websocketowe) ---
+
+@socketio.on('connect')
+def handle_connect():
+    if not current_user.is_authenticated:
+        return False
+    print(f"[WS] Client connected: {request.sid}")
+    # Do not start anything automatically here. Wait for client request.
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    print(f"[WS] Client disconnected: {request.sid}")
+    # Disconnect will automatically break the loop in start_monitoring (on emit error)
+
+@socketio.on('start_monitoring')
+def handle_start_monitoring():
+    """
+    The client calls it once, and it enters
+    continuous data streaming mode until the client disconnects.
+    """
+    user_sid = request.sid
+    print(f"[WS] Client {user_sid} requested monitoring stream.")
+
     with app.app_context():
+        # 1. Initialize local state (log cursor)
         max_id = db.session.query(func.max(LogEntry.id)).scalar()
-        last_processed_log_id = max_id if max_id else 0
-        print(f"[*] Monitoring starts from Log ID: {last_processed_log_id}")
+        client_log_cursor = max_id if max_id else 0
+        
+        # Local cache of host statuses
+        client_host_cache = {} 
 
-def background_monitor():
-    """Wątek monitorujący zmiany w bazie danych i wysyłający powiadomienia WS."""
-    global last_processed_log_id
-    
-    with app.app_context():
+        # The loop runs inside this websocket request
         while True:
             try:
-                # 1. SPRAWDZANIE STATUSU HOSTÓW (ONLINE/OFFLINE)
+                # --- A. CHECK HOST STATUS ---
                 hosts = Host.query.all()
-                now = datetime.now(timezone.utc)
+                now = datetime.datetime.now(datetime.timezone.utc)
 
                 for host in hosts:
-                    # Logika online: heartbeat młodszy niż 60 sekund
                     is_online = False
                     if host.last_heartbeat:
                         last_hb = host.last_heartbeat
                         if last_hb.tzinfo is None:
-                            last_hb = last_hb.replace(tzinfo=timezone.utc)
+                            last_hb = last_hb.replace(tzinfo=datetime.timezone.utc)
                         delta = (now - last_hb).total_seconds()
                         is_online = delta < 60
                     
-                    # Sprawdź czy stan się zmienił względem cache
-                    previous_state = host_status_cache.get(host.id)
+                    prev_state = client_host_cache.get(host.id)
                     
-                    if previous_state is None or previous_state != is_online:
-                        # state changed, emit update
-                        print(f"[WS] Host {host.hostname} state changed: {previous_state} -> {is_online}")
+                    if prev_state is None or prev_state != is_online:
                         socketio.emit('host_status_update', {
                             'host_id': host.id,
                             'hostname': host.hostname,
                             'is_online': is_online,
                             'last_seen': host.last_heartbeat.strftime('%H:%M:%S') if host.last_heartbeat else "Never"
-                        })
+                        }, room=user_sid)
                         
-                        host_status_cache[host.id] = is_online
+                        client_host_cache[host.id] = is_online
 
-                # 2. SPRAWDZANIE NOWYCH LOGÓW
-                # Pobierz logi, które mają ID większe niż ostatnio przetworzone
-                new_logs = LogEntry.query.filter(LogEntry.id > last_processed_log_id).order_by(LogEntry.id.asc()).all()
+                # --- B. CHECK FOR NEW LOGS ---
+                new_logs = LogEntry.query.filter(LogEntry.id > client_log_cursor).order_by(LogEntry.id.asc()).all()
                 
                 if new_logs:
                     for log in new_logs:
@@ -80,18 +92,18 @@ def background_monitor():
                             'message': log.message,
                             'severity': log.severity.value
                         }
-                        socketio.emit('new_log', payload)
-                        # Przesuwamy wskaźnik
-                        last_processed_log_id = log.id
+                        socketio.emit('new_log', payload, room=user_sid)
+                        client_log_cursor = log.id
+                
+                # --- C. SERVER BREATH ---
+                # This is crucial! socketio.sleep allows the server to handle other requests (heartbeat)
+                # during this infinite loop.
+                socketio.sleep(2)
 
             except Exception as e:
-                print(f"[Monitor Error] {e}")
-                db.session.rollback() # Ważne przy błędach DB w pętli
-            
-            # Odczekaj chwilę przed następnym sprawdzeniem bazy
-            socketio.sleep(2)
-
-
+                # Emission error usually means the client disconnected
+                print(f"[WS] Loop stopped for {user_sid} (Disconnected/Error): {e}")
+                break
 
 
 
@@ -190,8 +202,5 @@ def delete_rule_from_host(host_id, rule_id):
 
 
 if __name__ == '__main__':
-    init_globals()
-    socketio.start_background_task(target=background_monitor)
-
     print("Starting Web Interface on port 5000...")
     app.run(host='0.0.0.0', port=5002, debug=True)
