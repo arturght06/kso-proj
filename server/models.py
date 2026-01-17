@@ -23,11 +23,18 @@ class Host(db.Model):
     hostname = db.Column(db.String(128), unique=True, nullable=False)
     ip_address = db.Column(db.String(45), nullable=False)
     last_heartbeat = db.Column(db.DateTime, default=datetime.now(timezone.utc))
-    is_active = db.Column(db.Boolean, default=True)
+    enabled = db.Column(db.Boolean, default=True)
     
     rules = db.relationship('MonitoringRule', secondary=host_rules, lazy='subquery',
         backref=db.backref('hosts', lazy=True))
     logs = db.relationship('LogEntry', backref='host', lazy=True)
+
+    @property
+    def is_online(self, liveness_threshold_seconds=60):
+        if not self.last_heartbeat:
+            return False
+        delta = datetime.now(timezone.utc) - self.last_heartbeat
+        return delta.total_seconds() < liveness_threshold_seconds
 
 class MonitoringRule(db.Model):
     __tablename__ = 'monitoring_rules'

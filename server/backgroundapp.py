@@ -1,17 +1,22 @@
+import threading
 from flask import Flask, request, jsonify
+from flask_socketio import SocketIO, emit
 from models import db, Host, LogEntry, MonitoringRule, host_rules, Severity, User
 import datetime
 import os
 from dotenv import load_dotenv
+from time import sleep
 
 load_dotenv()
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'postgresql://admin:secret_kso_password@localhost:5432/kso_monitor')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'secret_socket_key')
 
 db.init_app(app)
+
+socketio = SocketIO(app, cors_allowed_origins="*")
 
 def seed_data():
     if not MonitoringRule.query.first():
@@ -29,6 +34,34 @@ def seed_data():
         print("[Init] Seeded default admin user.")
     
     db.session.commit()
+
+def monitor_hosts():
+    with app.app_context():
+        while True:
+            try:
+                hosts = Host.query.all()
+                now = datetime.datetime.now(datetime.timezone.utc)
+                
+                for host in hosts:
+                    if not host.last_heartbeat:
+                        continue
+                        
+                    delta = (now - host.last_heartbeat).total_seconds()
+                    
+                    # set offline if host hasn't sent heartbeat in last 60 seconds
+                    is_online = delta < 60
+                    
+                    # send status update via SocketIO to browser client
+                    socketio.emit('host_status_update', {
+                        'host_id': host.id,
+                        'hostname': host.hostname,
+                        'is_online': is_online,
+                        'last_seen': host.last_heartbeat.strftime('%H:%M:%S')
+                    })
+            except Exception as e:
+                print(f"Monitor error: {e}")
+            
+            sleep(5)
 
 @app.route('/api/heartbeat', methods=['POST'])
 def heartbeat():
@@ -98,6 +131,10 @@ if __name__ == '__main__':
     with app.app_context():
         db.create_all()
         seed_data()
+
+
+    threading.Thread(target=monitor_hosts, daemon=True).start()
+    
     # W produkcji tu musi być context SSL!
     app.run(host='0.0.0.0', port=5555, debug=True)
 
