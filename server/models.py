@@ -31,6 +31,8 @@ class Host(db.Model):
 
     @property
     def is_online(self, liveness_threshold_seconds=60):
+        if self.last_heartbeat.tzinfo is None:
+            self.last_heartbeat = self.last_heartbeat.replace(tzinfo=datetime.timezone.utc)
         if not self.last_heartbeat:
             return False
         delta = datetime.now(timezone.utc) - self.last_heartbeat
