@@ -40,7 +40,7 @@ def monitor_hosts():
         while True:
             try:
                 hosts = Host.query.all()
-                now = datetime.datetime.now(datetime.timezone.utc)
+                now = datetime.now(timezone.utc)
                 
                 for host in hosts:
                     if not host.last_heartbeat:
