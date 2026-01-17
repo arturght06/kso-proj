@@ -1,10 +1,12 @@
 from flask import Flask, request, jsonify, render_template, redirect, url_for, flash
 from flask_login import LoginManager, login_user, login_required, logout_user, current_user
+from flask_socketio import SocketIO, emit
 from werkzeug.security import generate_password_hash, check_password_hash
 from models import db, Host, LogEntry, MonitoringRule, User, Severity, MonitoringRule
-import datetime
+from datetime import datetime, timezone
 import os
 from dotenv import load_dotenv
+from sqlalchemy import func
 
 load_dotenv()
 
@@ -15,6 +17,83 @@ app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'postgresql://
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db.init_app(app)
+
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
+
+last_processed_log_id = 0
+host_status_cache = {}  # {host_id: boolean_is_online}
+
+def init_globals():
+    """Ustawia początkowy ID logów na max, żeby nie wysyłać starych logów przy restarcie."""
+    global last_processed_log_id
+    with app.app_context():
+        max_id = db.session.query(func.max(LogEntry.id)).scalar()
+        last_processed_log_id = max_id if max_id else 0
+        print(f"[*] Monitoring starts from Log ID: {last_processed_log_id}")
+
+def background_monitor():
+    """Wątek monitorujący zmiany w bazie danych i wysyłający powiadomienia WS."""
+    global last_processed_log_id
+    
+    with app.app_context():
+        while True:
+            try:
+                # 1. SPRAWDZANIE STATUSU HOSTÓW (ONLINE/OFFLINE)
+                hosts = Host.query.all()
+                now = datetime.now(timezone.utc)
+
+                for host in hosts:
+                    # Logika online: heartbeat młodszy niż 60 sekund
+                    is_online = False
+                    if host.last_heartbeat:
+                        last_hb = host.last_heartbeat
+                        if last_hb.tzinfo is None:
+                            last_hb = last_hb.replace(tzinfo=timezone.utc)
+                        delta = (now - last_hb).total_seconds()
+                        is_online = delta < 60
+                    
+                    # Sprawdź czy stan się zmienił względem cache
+                    previous_state = host_status_cache.get(host.id)
+                    
+                    if previous_state is None or previous_state != is_online:
+                        # state changed, emit update
+                        print(f"[WS] Host {host.hostname} state changed: {previous_state} -> {is_online}")
+                        socketio.emit('host_status_update', {
+                            'host_id': host.id,
+                            'hostname': host.hostname,
+                            'is_online': is_online,
+                            'last_seen': host.last_heartbeat.strftime('%H:%M:%S') if host.last_heartbeat else "Never"
+                        })
+                        
+                        host_status_cache[host.id] = is_online
+
+                # 2. SPRAWDZANIE NOWYCH LOGÓW
+                # Pobierz logi, które mają ID większe niż ostatnio przetworzone
+                new_logs = LogEntry.query.filter(LogEntry.id > last_processed_log_id).order_by(LogEntry.id.asc()).all()
+                
+                if new_logs:
+                    for log in new_logs:
+                        payload = {
+                            'timestamp': log.timestamp.strftime('%H:%M:%S'),
+                            'hostname': log.host.hostname,
+                            'program': log.program,
+                            'message': log.message,
+                            'severity': log.severity.value
+                        }
+                        socketio.emit('new_log', payload)
+                        # Przesuwamy wskaźnik
+                        last_processed_log_id = log.id
+
+            except Exception as e:
+                print(f"[Monitor Error] {e}")
+                db.session.rollback() # Ważne przy błędach DB w pętli
+            
+            # Odczekaj chwilę przed następnym sprawdzeniem bazy
+            socketio.sleep(2)
+
+
+
+
 
 # --- SETUP LOGIN MANAGER ---
 login_manager = LoginManager()
@@ -111,5 +190,8 @@ def delete_rule_from_host(host_id, rule_id):
 
 
 if __name__ == '__main__':
+    init_globals()
+    socketio.start_background_task(target=background_monitor)
+
     print("Starting Web Interface on port 5000...")
     app.run(host='0.0.0.0', port=5002, debug=True)

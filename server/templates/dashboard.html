@@ -1,6 +1,63 @@
 {% extends "base.html" %}
 
 {% block content %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+<script type="text/javascript">
+    document.addEventListener("DOMContentLoaded", function() {
+        // Połącz z serwerem (tym samym, z którego załadowano stronę)
+        var socket = io();
+
+        // 1. Odbieranie statusu hosta
+        socket.on('host_status_update', function(data) {
+            console.log("Status update:", data);
+            
+            // Znajdź elementy w DOM po ID
+            var statusSpan = document.getElementById("status-" + data.host_id);
+            var lastSeenCell = document.getElementById("last-seen-" + data.host_id);
+
+            if (statusSpan) {
+                if (data.is_online) {
+                    statusSpan.style.color = "green";
+                    statusSpan.innerText = "Online";
+                } else {
+                    statusSpan.style.color = "red";
+                    statusSpan.innerText = "Offline";
+                }
+            }
+            if (lastSeenCell) {
+                lastSeenCell.innerText = data.last_seen;
+            }
+        });
+
+        // 2. Odbieranie nowych logów
+        socket.on('new_log', function(data) {
+            console.log("New log:", data);
+            var tableBody = document.querySelector("#logs-table tbody");
+            
+            // Stwórz nowy wiersz
+            var row = tableBody.insertRow(0); // Wstaw na początek
+            
+            // Ustal kolor
+            var color = 'black';
+            if(data.severity === 'critical') color = 'red';
+            else if(data.severity === 'warning') color = 'orange';
+
+            row.innerHTML = `
+                <td>${data.timestamp}</td>
+                <td>${data.hostname}</td>
+                <td>${data.program}</td>
+                <td>${data.message.substring(0, 100)}...</td>
+                <td style="font-weight: bold; color: ${color}">${data.severity}</td>
+            `;
+
+            // Opcjonalnie: usuń nadmiarowe wiersze (powyżej 20)
+            if(tableBody.rows.length > 20) {
+                tableBody.deleteRow(20);
+            }
+        });
+    });
+</script>
+
 <h2>System Overview</h2>
 
 <div class="card">
@@ -24,10 +81,14 @@
                         </a>
                     </td>
                     <td>{{ host.ip_address }}</td>
-                    <td>{{ host.last_heartbeat.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+                    
+                    <td id="last-seen-{{ host.id }}">
+                        {{ host.last_heartbeat.strftime('%H:%M:%S') if host.last_heartbeat else 'Never' }}
+                    </td>
+                    
                     <td>
-                        <span style="color: {{ 'green' if host.is_active else 'red' }}">
-                            {{ 'Online' if host.is_active else 'Offline' }}
+                        <span id="status-{{ host.id }}" style="font-weight: bold; color: {{ 'green' if host.is_online else 'red' }}">
+                            {{ 'Online' if host.is_online else 'Offline' }}
                         </span>
                     </td>
                 </tr>
@@ -41,18 +102,18 @@
 
 <div class="card">
     <h3>Recent Audit Logs</h3>
-    {% if logs %}
-        <table>
-            <thead>
-                <tr>
-                    <th>Time</th>
-                    <th>Host</th>
-                    <th>Program</th>
-                    <th>Message</th>
-                    <th>Severity</th>
-                </tr>
-            </thead>
-            <tbody>
+    <table id="logs-table">
+        <thead>
+            <tr>
+                <th>Time</th>
+                <th>Host</th>
+                <th>Program</th>
+                <th>Message</th>
+                <th>Severity</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% if logs %}
                 {% for log in logs %}
                 <tr>
                     <td>{{ log.timestamp.strftime('%H:%M:%S') }}</td>
@@ -64,10 +125,12 @@
                     </td>
                 </tr>
                 {% endfor %}
-            </tbody>
-        </table>
-    {% else %}
-        <p>No logs received yet.</p>
+            {% else %}
+                {% endif %}
+        </tbody>
+    </table>
+    {% if not logs %}
+        <p id="no-logs-msg">No logs received yet.</p>
     {% endif %}
 </div>
 {% endblock %}
