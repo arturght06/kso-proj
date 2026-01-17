@@ -3,7 +3,7 @@ Flask-SQLAlchemy
 sqlalchemy
 psycopg2-binary
 python-dotenv
-python-dotenv
 requests
 flask_login
 flask_socketio
+eventlet

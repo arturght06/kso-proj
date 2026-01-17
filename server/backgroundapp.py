@@ -2,7 +2,7 @@ import threading
 from flask import Flask, request, jsonify
 from flask_socketio import SocketIO, emit
 from models import db, Host, LogEntry, MonitoringRule, host_rules, Severity, User
-import datetime
+from datetime import datetime, timezone
 import os
 from dotenv import load_dotenv
 from time import sleep
@@ -48,7 +48,7 @@ def monitor_hosts():
 
                     last_hb = host.last_heartbeat
                     if last_hb.tzinfo is None:
-                        last_hb = last_hb.replace(tzinfo=datetime.timezone.utc)
+                        last_hb = last_hb.replace(tzinfo=timezone.utc)
 
                     delta = (now - last_hb).total_seconds()
 
@@ -81,7 +81,7 @@ def heartbeat():
         host.rules.extend(rules)
         db.session.add(host)
     
-    host.last_heartbeat = datetime.datetime.now(datetime.timezone.utc)
+    host.last_heartbeat = datetime.now(timezone.utc)
     host.ip_address = ip 
     host.enabled = True
     db.session.commit()
