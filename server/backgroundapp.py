@@ -45,9 +45,13 @@ def monitor_hosts():
                 for host in hosts:
                     if not host.last_heartbeat:
                         continue
-                        
-                    delta = (now - host.last_heartbeat).total_seconds()
-                    
+
+                    last_hb = host.last_heartbeat
+                    if last_hb.tzinfo is None:
+                        last_hb = last_hb.replace(tzinfo=datetime.timezone.utc)
+
+                    delta = (now - last_hb).total_seconds()
+
                     # set offline if host hasn't sent heartbeat in last 60 seconds
                     is_online = delta < 60
                     
@@ -79,7 +83,7 @@ def heartbeat():
     
     host.last_heartbeat = datetime.datetime.now(datetime.timezone.utc)
     host.ip_address = ip 
-    host.is_active = True
+    host.enabled = True
     db.session.commit()
     
     return jsonify({"status": "ok", "host_id": host.id})
