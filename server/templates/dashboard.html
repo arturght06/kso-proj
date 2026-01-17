@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 
 {% block content %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
 <script type="text/javascript">
     document.addEventListener("DOMContentLoaded", function() {
         var socket = io();
@@ -83,10 +84,14 @@
                         </a>
                     </td>
                     <td>{{ host.ip_address }}</td>
-                    <td>{{ host.last_heartbeat.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+                    
+                    <td id="last-seen-{{ host.id }}">
+                        {{ host.last_heartbeat.strftime('%H:%M:%S') if host.last_heartbeat else 'Never' }}
+                    </td>
+                    
                     <td>
-                        <span style="color: {{ 'green' if host.is_active else 'red' }}">
-                            {{ 'Online' if host.is_active else 'Offline' }}
+                        <span id="status-{{ host.id }}" style="font-weight: bold; color: {{ 'green' if host.is_online else 'red' }}">
+                            {{ 'Online' if host.is_online else 'Offline' }}
                         </span>
                     </td>
                 </tr>
@@ -100,18 +105,18 @@
 
 <div class="card">
     <h3>Recent Audit Logs</h3>
-    {% if logs %}
-        <table>
-            <thead>
-                <tr>
-                    <th>Time</th>
-                    <th>Host</th>
-                    <th>Program</th>
-                    <th>Message</th>
-                    <th>Severity</th>
-                </tr>
-            </thead>
-            <tbody>
+    <table id="logs-table">
+        <thead>
+            <tr>
+                <th>Time</th>
+                <th>Host</th>
+                <th>Program</th>
+                <th>Message</th>
+                <th>Severity</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% if logs %}
                 {% for log in logs %}
                 <tr>
                     <td>{{ log.timestamp.strftime('%H:%M:%S') }}</td>
@@ -123,10 +128,12 @@
                     </td>
                 </tr>
                 {% endfor %}
-            </tbody>
-        </table>
-    {% else %}
-        <p>No logs received yet.</p>
+            {% else %}
+                {% endif %}
+        </tbody>
+    </table>
+    {% if not logs %}
+        <p id="no-logs-msg">No logs received yet.</p>
     {% endif %}
 </div>
 {% endblock %}
