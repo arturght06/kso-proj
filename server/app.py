@@ -49,61 +49,61 @@ def handle_start_monitoring():
         max_id = db.session.query(func.max(LogEntry.id)).scalar()
         client_log_cursor = max_id if max_id else 0
         
-        # Local cache of host statuses
-        client_host_cache = {} 
+    # Local cache of host statuses
+    client_host_cache = {} 
 
-        # The loop runs inside this websocket request
-        while True:
-            try:
-                # --- A. CHECK HOST STATUS ---
-                hosts = Host.query.all()
-                now = datetime.now(timezone.utc)
+    # The loop runs inside this websocket request
+    while True:
+        try:
+            # --- A. CHECK HOST STATUS ---
+            hosts = Host.query.all()
+            now = datetime.now(timezone.utc)
 
-                for host in hosts:
-                    is_online = False
-                    if host.last_heartbeat:
-                        last_hb = host.last_heartbeat
-                        if last_hb.tzinfo is None:
-                            last_hb = last_hb.replace(tzinfo=timezone.utc)
-                        delta = (now - last_hb).total_seconds()
-                        is_online = delta < 60
-                    
-                    prev_state = client_host_cache.get(host.id)
-                    
-                    if prev_state is None or prev_state != is_online:
-                        socketio.emit('host_status_update', {
-                            'host_id': host.id,
-                            'hostname': host.hostname,
-                            'is_online': is_online,
-                            'last_seen': host.last_heartbeat.strftime('%H:%M:%S') if host.last_heartbeat else "Never"
-                        }, room=user_sid)
-                        
-                        client_host_cache[host.id] = is_online
-
-                # --- B. CHECK FOR NEW LOGS ---
-                new_logs = LogEntry.query.filter(LogEntry.id > client_log_cursor).order_by(LogEntry.id.asc()).all()
+            for host in hosts:
+                is_online = False
+                if host.last_heartbeat:
+                    last_hb = host.last_heartbeat
+                    if last_hb.tzinfo is None:
+                        last_hb = last_hb.replace(tzinfo=timezone.utc)
+                    delta = (now - last_hb).total_seconds()
+                    is_online = delta < 60
                 
-                if new_logs:
-                    for log in new_logs:
-                        payload = {
-                            'timestamp': log.timestamp.strftime('%H:%M:%S'),
-                            'hostname': log.host.hostname,
-                            'program': log.program,
-                            'message': log.message,
-                            'severity': log.severity.value
-                        }
-                        socketio.emit('new_log', payload, room=user_sid)
-                        client_log_cursor = log.id
+                prev_state = client_host_cache.get(host.id)
                 
-                # --- C. SERVER BREATH ---
-                # This is crucial! socketio.sleep allows the server to handle other requests (heartbeat)
-                # during this infinite loop.
-                socketio.sleep(2)
+                if prev_state is None or prev_state != is_online:
+                    socketio.emit('host_status_update', {
+                        'host_id': host.id,
+                        'hostname': host.hostname,
+                        'is_online': is_online,
+                        'last_seen': host.last_heartbeat.strftime('%H:%M:%S') if host.last_heartbeat else "Never"
+                    }, room=user_sid)
+                    
+                    client_host_cache[host.id] = is_online
 
-            except Exception as e:
-                # Emission error usually means the client disconnected
-                print(f"[WS] Loop stopped for {user_sid} (Disconnected/Error): {e}")
-                break
+            # --- B. CHECK FOR NEW LOGS ---
+            new_logs = LogEntry.query.filter(LogEntry.id > client_log_cursor).order_by(LogEntry.id.asc()).all()
+            
+            if new_logs:
+                for log in new_logs:
+                    payload = {
+                        'timestamp': log.timestamp.strftime('%H:%M:%S'),
+                        'hostname': log.host.hostname,
+                        'program': log.program,
+                        'message': log.message,
+                        'severity': log.severity.value
+                    }
+                    socketio.emit('new_log', payload, room=user_sid)
+                    client_log_cursor = log.id
+            
+            # --- C. SERVER BREATH ---
+            # This is crucial! socketio.sleep allows the server to handle other requests (heartbeat)
+            # during this infinite loop.
+            socketio.sleep(2)
+
+        except Exception as e:
+            # Emission error usually means the client disconnected
+            print(f"[WS] Loop stopped for {user_sid} (Disconnected/Error): {e}")
+            break
 
 
 
