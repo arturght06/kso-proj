@@ -57,14 +57,14 @@ def handle_start_monitoring():
             try:
                 # --- A. CHECK HOST STATUS ---
                 hosts = Host.query.all()
-                now = datetime.datetime.now(datetime.timezone.utc)
+                now = datetime.now(timezone.utc)
 
                 for host in hosts:
                     is_online = False
                     if host.last_heartbeat:
                         last_hb = host.last_heartbeat
                         if last_hb.tzinfo is None:
-                            last_hb = last_hb.replace(tzinfo=datetime.timezone.utc)
+                            last_hb = last_hb.replace(tzinfo=timezone.utc)
                         delta = (now - last_hb).total_seconds()
                         is_online = delta < 60
                     

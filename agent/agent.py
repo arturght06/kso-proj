@@ -5,7 +5,7 @@ import subprocess
 import os
 import re
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -108,7 +108,7 @@ class SecurityAgent:
             "details": {
                 "raw": line.strip(),
                 "key_label": key,
-                "timestamp": str(datetime.now())
+                "timestamp": str(datetime.now(timezone.utc))
             }
         }
 
