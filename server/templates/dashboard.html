@@ -118,81 +118,75 @@
 </div>
 
 <div class="card">
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-        <h3>Recent Audit Logs</h3>
-        <label for="limit-select">Show last:</label>
-        <select id="limit-select">
-            {% for val in [10, 20, 50, 100] %}
-                <option value="{{ val }}" {% if request.args.get('limit', 20, type=int) == val %}selected{% endif %}>{{ val }}</option>
-            {% endfor %}
-        </select>
-        <script>
-            document.getElementById('limit-select').addEventListener('change', function() {
-                const params = new URLSearchParams(window.location.search);
-                params.set('limit', this.value);
-                window.location.search = params.toString();
-            });
-        </script>
-
-    {% if logs %}
-        <table id="logs-table">
-            <thead>
-                <tr>
-                    <th style="width: 15%;">Time</th>
-                    <th style="width: 15%;">Host</th>
-                    <th style="width: 15%;">Event Key</th>
-                    <th style="width: 20%;">Executable / User</th>
-                    <th style="width: 10%;">Severity</th>
-                    <th style="width: 10%;">Action</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for log in logs %}
-                <tr>
-                    <td>{{ log.timestamp.strftime('%H:%M:%S') }}</td>
-                    <td>{{ log.host.hostname }}</td>
-                    
-                    <td>
-                        <span style="background: #eef2f3; padding: 2px 6px; border-radius: 4px; font-family: monospace; color: #2c3e50;">
-                            {{ log.details.get('key_label', 'unknown') if log.details else 'unknown' }}
-                        </span>
-                    </td>
-
-                    <td>
-                        {% if log.details and log.details.get('executable') %}
-                            <div style="font-size: 0.9em; font-weight: bold;">{{ log.details.get('executable') }}</div>
-                        {% endif %}
-                        {% if log.details and log.details.get('uid') %}
-                            <div style="font-size: 0.8em; color: #7f8c8d;">UID: {{ log.details.get('uid') }}</div>
-                        {% endif %}
-                        {% if not log.details or (not log.details.get('executable') and not log.details.get('uid')) %}
-                            <span style="color: #ccc;">-</span>
-                        {% endif %}
-                    </td>
-
-                    <td style="font-weight: bold; color: {{ 'red' if log.severity.value == 'critical' else 'orange' if log.severity.value == 'warning' else 'black' }}">
-                        {{ log.severity.value }}
-                    </td>
-                    
-                    <td>
-                        <button onclick="toggleDetails({{ log.id }})" class="btn" style="padding: 4px 10px; font-size: 0.8em; background: #34495e;">
-                            Details
-                        </button>
-                    </td>
-                </tr>
+    <h3>Recent Audit Logs</h3>
+    <label for="limit-select">Show last:</label>
+    <select id="limit-select">
+        {% for val in [10, 20, 50, 100] %}
+            <option value="{{ val }}" {% if request.args.get('limit', 20, type=int) == val %}selected{% endif %}>{{ val }}</option>
+        {% endfor %}
+    </select>
+    <script>
+        document.getElementById('limit-select').addEventListener('change', function() {
+            const params = new URLSearchParams(window.location.search);
+            params.set('limit', this.value);
+            window.location.search = params.toString();
+        });
+    </script>
+    <table id="logs-table">
+        <thead>
+            <tr>
+                <th style="width: 15%;">Time</th>
+                <th style="width: 15%;">Host</th>
+                <th style="width: 15%;">Event Key</th>
+                <th style="width: 20%;">Executable / User</th>
+                <th style="width: 10%;">Severity</th>
+                <th style="width: 10%;">Action</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for log in logs %}
+            <tr>
+                <td>{{ log.timestamp.strftime('%H:%M:%S') }}</td>
+                <td>{{ log.host.hostname }}</td>
                 
-                <tr id="raw-{{ log.id }}" style="display: none; background-color: #f8f9fa;">
-                    <td colspan="6" style="padding: 10px;">
-                        <div style="font-family: monospace; font-size: 0.85em; white-space: pre-wrap; word-break: break-all; color: #555;">
-                            <strong>Raw Message:</strong><br>{{ log.message }}
-                        </div>
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    {% else %}
-        <p>No logs received yet.</p>
-    {% endif %}
+                <td>
+                    <span style="background: #eef2f3; padding: 2px 6px; border-radius: 4px; font-family: monospace; color: #2c3e50;">
+                        {{ log.details.get('key_label', 'unknown') if log.details else 'unknown' }}
+                    </span>
+                </td>
+
+                <td>
+                    {% if log.details and log.details.get('executable') %}
+                        <div style="font-size: 0.9em; font-weight: bold;">{{ log.details.get('executable') }}</div>
+                    {% endif %}
+                    {% if log.details and log.details.get('uid') %}
+                        <div style="font-size: 0.8em; color: #7f8c8d;">UID: {{ log.details.get('uid') }}</div>
+                    {% endif %}
+                    {% if not log.details or (not log.details.get('executable') and not log.details.get('uid')) %}
+                        <span style="color: #ccc;">-</span>
+                    {% endif %}
+                </td>
+
+                <td style="font-weight: bold; color: {{ 'red' if log.severity.value == 'critical' else 'orange' if log.severity.value == 'warning' else 'black' }}">
+                    {{ log.severity.value }}
+                </td>
+                
+                <td>
+                    <button onclick="toggleDetails({{ log.id }})" class="btn" style="padding: 4px 10px; font-size: 0.8em; background: #34495e;">
+                        Details
+                    </button>
+                </td>
+            </tr>
+            
+            <tr id="raw-{{ log.id }}" style="display: none; background-color: #f8f9fa;">
+                <td colspan="6" style="padding: 10px;">
+                    <div style="font-family: monospace; font-size: 0.85em; white-space: pre-wrap; word-break: break-all; color: #555;">
+                        <strong>Raw Message:</strong><br>{{ log.message }}
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
 </div>
 {% endblock %}
