@@ -3,62 +3,77 @@
 {% block content %}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
 <script type="text/javascript">
+    // Funkcja pomocnicza do przeładowania strony z nowym limitem
+    function changeLimit(limit) {
+        const url = new URL(window.location.href);
+        url.searchParams.set('limit', limit);
+        window.location.href = url.toString();
+    }
+
+    // Funkcja do pokazywania/ukrywania surowego loga
+    function toggleDetails(rowId) {
+        var x = document.getElementById("raw-" + rowId);
+        if (x.style.display === "none") {
+            x.style.display = "table-row";
+        } else {
+            x.style.display = "none";
+        }
+    }
+
     document.addEventListener("DOMContentLoaded", function() {
         var socket = io();
 
         socket.on('connect', function() {
-            console.log("Connected to Dashboard. Requesting ALL streams.");
-            // Send empty object -> Request ALL logs
+            console.log("Connected to Dashboard.");
             socket.emit('start_monitoring', {});
         });
 
-        // 1. Host Status Updates
         socket.on('host_status_update', function(data) {
             var statusSpan = document.getElementById("status-" + data.host_id);
             var lastSeenCell = document.getElementById("last-seen-" + data.host_id);
-
             if (statusSpan) {
-                if (data.is_online) {
-                    statusSpan.style.color = "green";
-                    statusSpan.innerText = "Online";
-                } else {
-                    statusSpan.style.color = "red";
-                    statusSpan.innerText = "Offline";
-                }
+                statusSpan.style.color = data.is_online ? "green" : "red";
+                statusSpan.innerText = data.is_online ? "Online" : "Offline";
             }
-            if (lastSeenCell) {
-                lastSeenCell.innerText = data.last_seen;
-            }
+            if (lastSeenCell) lastSeenCell.innerText = data.last_seen;
         });
 
-        // 2. New Log Updates
+        // Obsługa nowego loga przez WebSocket (Aktualizacja tabeli)
         socket.on('new_log', function(data) {
             var tableBody = document.querySelector("#logs-table tbody");
-            if (!tableBody) return; // Safety check
+            if (!tableBody) return;
 
-            var row = tableBody.insertRow(0);
+            // Generujemy unikalne ID dla wiersza detali
+            var uniqueId = Date.now() + Math.random().toString(36).substr(2, 9);
             
-            // Highlight animation
+            // Parsowanie detali (jeśli są)
+            // Backend w 'data' może przysłać surowe message, ale agent przesyła też szczegóły
+            // W WebSocket payload (app.py) musisz upewnić się, że przesyłasz 'details' lub parsować message.
+            // Tutaj zakładamy prostą prezentację, bo WebSocket w app.py wysyła uproszczony payload.
+            // Aby uzyskać pełne detale przez socket, trzeba by zaktualizować app.py -> handle_start_monitoring.
+            
+            // Dla uproszczenia w wersji "live" z socketa pokażemy podstawy,
+            // ale po odświeżeniu (z bazy) będą pełne dane.
+            
+            var row = tableBody.insertRow(0);
             row.style.backgroundColor = "#e8f5e9";
             setTimeout(() => { row.style.transition = "background 1s"; row.style.backgroundColor = "transparent"; }, 500);
 
-            var color = 'black';
-            if(data.severity === 'critical') color = 'red';
-            else if(data.severity === 'warning') color = 'orange';
-
-            // Safe message handling (handle nulls)
-            var safeMessage = (data.message || "").substring(0, 100);
+            var color = data.severity === 'critical' ? 'red' : (data.severity === 'warning' ? 'orange' : 'black');
 
             row.innerHTML = `
                 <td>${data.timestamp}</td>
                 <td>${data.hostname}</td>
-                <td>${data.program}</td>
-                <td style="font-family: monospace;">${safeMessage}...</td>
+                <td><strong>${data.program}</strong></td>
+                <td>${data.message.substring(0, 50)}...</td>
                 <td style="font-weight: bold; color: ${color}">${data.severity}</td>
+                <td><button onclick="alert('${data.message.replace(/'/g, "\\'")}')" class="btn" style="padding: 2px 8px; font-size: 0.8em;">Raw</button></td>
             `;
-
-            if(tableBody.rows.length > 20) {
-                tableBody.deleteRow(20);
+            
+            // Usuń nadmiarowe wiersze
+            var limit = {{ current_limit }};
+            if(tableBody.rows.length > limit) {
+                tableBody.deleteRow(limit);
             }
         });
     });
@@ -103,43 +118,79 @@
 </div>
 
 <div class="card">
-    <h3>Recent Audit Logs</h3>
-    <label for="limit-select">Show last:</label>
-    <select id="limit-select">
-        {% for val in [10, 20, 50, 100] %}
-            <option value="{{ val }}" {% if request.args.get('limit', 20, type=int) == val %}selected{% endif %}>{{ val }}</option>
-        {% endfor %}
-    </select>
-    <script>
-        document.getElementById('limit-select').addEventListener('change', function() {
-            const params = new URLSearchParams(window.location.search);
-            params.set('limit', this.value);
-            window.location.search = params.toString();
-        });
-    </script>
-    <table id="logs-table">
-        <thead>
-            <tr>
-                <th>Time</th>
-                <th>Host</th>
-                <th>Program</th>
-                <th>Message</th>
-                <th>Severity</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for log in logs %}
-            <tr>
-                <td>{{ log.timestamp.strftime('%H:%M:%S') }}</td>
-                <td>{{ log.host.hostname }}</td>
-                <td>{{ log.program }}</td>
-                <td style="font-family: monospace;">{{ log.message[:100] }}...</td>
-                <td style="font-weight: bold; color: {{ 'red' if log.severity.value == 'critical' else 'orange' if log.severity.value == 'warning' else 'black' }}">
-                    {{ log.severity.value }}
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+        <h3>Recent Audit Logs</h3>
+        
+        <div>
+            <label for="limit-select" style="margin-right: 5px;">Show:</label>
+            <select id="limit-select" onchange="changeLimit(this.value)" style="padding: 5px; border-radius: 4px; border: 1px solid #ccc;">
+                <option value="10" {% if current_limit == 10 %}selected{% endif %}>10</option>
+                <option value="20" {% if current_limit == 20 %}selected{% endif %}>20 (Default)</option>
+                <option value="50" {% if current_limit == 50 %}selected{% endif %}>50</option>
+                <option value="100" {% if current_limit == 100 %}selected{% endif %}>100</option>
+            </select>
+        </div>
+    </div>
+
+    {% if logs %}
+        <table id="logs-table">
+            <thead>
+                <tr>
+                    <th style="width: 15%;">Time</th>
+                    <th style="width: 15%;">Host</th>
+                    <th style="width: 15%;">Event Key</th>
+                    <th style="width: 20%;">Executable / User</th>
+                    <th style="width: 10%;">Severity</th>
+                    <th style="width: 10%;">Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for log in logs %}
+                <tr>
+                    <td>{{ log.timestamp.strftime('%H:%M:%S') }}</td>
+                    <td>{{ log.host.hostname }}</td>
+                    
+                    <td>
+                        <span style="background: #eef2f3; padding: 2px 6px; border-radius: 4px; font-family: monospace; color: #2c3e50;">
+                            {{ log.details.get('key_label', 'unknown') if log.details else 'unknown' }}
+                        </span>
+                    </td>
+
+                    <td>
+                        {% if log.details and log.details.get('executable') %}
+                            <div style="font-size: 0.9em; font-weight: bold;">{{ log.details.get('executable') }}</div>
+                        {% endif %}
+                        {% if log.details and log.details.get('uid') %}
+                            <div style="font-size: 0.8em; color: #7f8c8d;">UID: {{ log.details.get('uid') }}</div>
+                        {% endif %}
+                        {% if not log.details or (not log.details.get('executable') and not log.details.get('uid')) %}
+                            <span style="color: #ccc;">-</span>
+                        {% endif %}
+                    </td>
+
+                    <td style="font-weight: bold; color: {{ 'red' if log.severity.value == 'critical' else 'orange' if log.severity.value == 'warning' else 'black' }}">
+                        {{ log.severity.value }}
+                    </td>
+                    
+                    <td>
+                        <button onclick="toggleDetails({{ log.id }})" class="btn" style="padding: 4px 10px; font-size: 0.8em; background: #34495e;">
+                            Details
+                        </button>
+                    </td>
+                </tr>
+                
+                <tr id="raw-{{ log.id }}" style="display: none; background-color: #f8f9fa;">
+                    <td colspan="6" style="padding: 10px;">
+                        <div style="font-family: monospace; font-size: 0.85em; white-space: pre-wrap; word-break: break-all; color: #555;">
+                            <strong>Raw Message:</strong><br>{{ log.message }}
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <p>No logs received yet.</p>
+    {% endif %}
 </div>
 {% endblock %}
