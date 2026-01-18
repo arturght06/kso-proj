@@ -156,9 +156,18 @@ def logout():
 @login_required
 def host_details(host_id):
     host = Host.query.get_or_404(host_id)
+    search_query = request.args.get('q', '')
+    query = LogEntry.query.filter_by(host_id=host.id)
+
+    if search_query:
+        query = query.filter(
+            (LogEntry.message.ilike(f'%{search_query}%')) | 
+            (LogEntry.program.ilike(f'%{search_query}%'))
+        )
+    
     # last 50 logs for this host
-    logs = LogEntry.query.filter_by(host_id=host.id).order_by(LogEntry.timestamp.desc()).limit(50).all()
-    return render_template('host_details.html', host=host, logs=logs)
+    logs = query.order_by(LogEntry.timestamp.desc()).limit(50).all()
+    return render_template('host_details.html', host=host, logs=logs, search_query=search_query)
 
 @app.route('/host/<int:host_id>/add_rule', methods=['POST'])
 @login_required
