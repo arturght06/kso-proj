@@ -1,54 +1,81 @@
 {% extends "base.html" %}
 
 {% block content %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+<script type="text/javascript">
+    document.addEventListener("DOMContentLoaded", function() {
+        var socket = io();
+        
+        // Pobieramy ID hosta z szablonu Jinja do zmiennej JS
+        var currentHostId = {{ host.id }};
+
+        socket.on('connect', function() {
+            console.log("Connected. Requesting stream for Host ID: " + currentHostId);
+            // Wysyłamy żądanie monitorowania KONKRETNEGO hosta
+            socket.emit('start_monitoring', { 'host_id': currentHostId });
+        });
+
+        // 1. Aktualizacja statusu
+        socket.on('host_status_update', function(data) {
+            // Ignoruj, jeśli to update innego hosta (zabezpieczenie)
+            if (data.host_id !== currentHostId) return;
+
+            var statusSpan = document.getElementById("host-status");
+            var lastSeenSpan = document.getElementById("host-last-seen");
+
+            if (statusSpan) {
+                if (data.is_online) {
+                    statusSpan.style.color = "#27ae60"; // Zielony
+                    statusSpan.innerText = "(Online)";
+                } else {
+                    statusSpan.style.color = "#c0392b"; // Czerwony
+                    statusSpan.innerText = "(Offline)";
+                }
+            }
+            if (lastSeenSpan) {
+                lastSeenSpan.innerText = data.last_seen;
+            }
+        });
+
+        // 2. Nowe logi
+        socket.on('new_log', function(data) {
+            var tableBody = document.querySelector("#logs-table tbody");
+            var row = tableBody.insertRow(0);
+            
+            // Animacja podświetlenia nowego wiersza
+            row.style.backgroundColor = "#fff3cd";
+            setTimeout(() => { row.style.transition = "background 1s"; row.style.backgroundColor = "transparent"; }, 500);
+
+            var color = 'black';
+            if(data.severity === 'critical') color = 'red';
+            else if(data.severity === 'warning') color = 'orange';
+
+            row.innerHTML = `
+                <td>${data.timestamp}</td>
+                <td>${data.program}</td>
+                <td style="font-family: monospace; font-size: 0.9em;">${data.message.substring(0, 120)}...</td>
+                <td style="color: ${color}">${data.severity}</td>
+            `;
+
+            if(tableBody.rows.length > 50) {
+                tableBody.deleteRow(50);
+            }
+        });
+    });
+</script>
+
 <div style="margin-bottom: 20px;">
     <a href="{{ url_for('dashboard') }}" class="btn" style="background: #95a5a6;">&larr; Back to Dashboard</a>
 </div>
 
-<h2>Host: <span style="color: #2980b9;">{{ host.hostname }}</span></h2>
-<p>IP: {{ host.ip_address }} | Last Seen: {{ host.last_heartbeat.strftime('%Y-%m-%d %H:%M:%S') }}</p>
+<h2>
+    Host: <span style="color: #2980b9;">{{ host.hostname }}</span>
+    <span id="host-status" style="font-size: 0.6em; vertical-align: middle; color: {{ '#27ae60' if host.is_online else '#c0392b' }}">
+        {{ '(Online)' if host.is_online else '(Offline)' }}
+    </span>
+</h2>
 
-<div class="card">
-    <h3>Audit Rules Configuration</h3>
-    <p>Agenci pobiorą te zmiany przy następnym <i>heartbeat</i> (max 5s).</p>
-    
-    <table>
-        <thead>
-            <tr>
-                <th>Path</th>
-                <th>Permissions</th>
-                <th>Key</th>
-                <th>Action</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for rule in host.rules %}
-            <tr>
-                <td>{{ rule.path }}</td>
-                <td>{{ rule.permissions }}</td>
-                <td>{{ rule.key_label }}</td>
-                <td>
-                    <form action="{{ url_for('delete_rule_from_host', host_id=host.id, rule_id=rule.id) }}" method="POST" style="display:inline;">
-                        <button type="submit" style="background: #e74c3c; color: white; border: none; padding: 5px 10px; cursor: pointer; border-radius: 4px;">Remove</button>
-                    </form>
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-
-    <h4 style="margin-top: 20px;">Add New Rule</h4>
-    <form action="{{ url_for('add_rule_to_host', host_id=host.id) }}" method="POST" style="display: flex; gap: 10px;">
-        <input type="text" name="path" placeholder="/path/to/monitor" required style="flex: 2; padding: 8px;">
-        <select name="permissions" style="padding: 8px;">
-            <option value="wa">Write/Attribute (wa)</option>
-            <option value="rwxa">Read/Write/Exec/Attr (rwxa)</option>
-            <option value="x">Execute (x)</option>
-        </select>
-        <input type="text" name="key_label" placeholder="log_key_name" required style="flex: 1; padding: 8px;">
-        <button type="submit" class="btn" style="background: #27ae60;">Add Rule</button>
-    </form>
-</div>
+<p>IP: {{ host.ip_address }} | Last Seen: <span id="host-last-seen">{{ host.last_heartbeat.strftime('%Y-%m-%d %H:%M:%S') }}</span></p>
 
 <div class="card">
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">

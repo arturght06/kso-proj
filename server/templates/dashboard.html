@@ -9,7 +9,7 @@
         // 1. Gdy połączenie zostanie nawiązane, żądamy uruchomienia streamu
         socket.on('connect', function() {
             console.log("Connected via WebSockets. Requesting stream...");
-            socket.emit('start_monitoring');
+            socket.emit('start_monitoring', {});
         });
 
         // 2. Odbieranie statusu hosta (bez zmian)
