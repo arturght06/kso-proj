@@ -163,9 +163,8 @@ def logout():
 def host_details(host_id):
     host = Host.query.get_or_404(host_id)
     search_query = request.args.get('q', '')
-    query = LogEntry.query.filter_by(host_id=host.id)
     limit = request.args.get('limit', 20, type=int)
-
+    
     now = datetime.datetime.now()
     default_start = now - timedelta(days=1)
     
@@ -176,13 +175,14 @@ def host_details(host_id):
         date_from = datetime.datetime.strptime(date_from_str, '%Y-%m-%dT%H:%M')
         date_to = datetime.datetime.strptime(date_to_str, '%Y-%m-%dT%H:%M')
     except ValueError:
+        # Fallback w razie błędnego formatu
         date_from = default_start
         date_to = now
+        date_from_str = default_start.strftime('%Y-%m-%dT%H:%M')
+        date_to_str = now.strftime('%Y-%m-%dT%H:%M')
 
-    chart_base64 = generate_host_chart(host.id, date_from, date_to)
-
+    # 2. Pobieranie logów (używając tych dat)
     query = LogEntry.query.filter_by(host_id=host.id)
-    
     query = query.filter(LogEntry.timestamp >= date_from, LogEntry.timestamp <= date_to)
 
     if search_query:
@@ -193,12 +193,12 @@ def host_details(host_id):
 
     logs = query.order_by(LogEntry.timestamp.desc()).limit(limit).all()
     
-    return render_template('host_details.html', 
+    return render_template(
+        'host_details.html', 
         host=host, 
         logs=logs, 
         search_query=search_query, 
         current_limit=limit,
-        chart_data=chart_base64,
         date_from=date_from_str,
         date_to=date_to_str
     )
