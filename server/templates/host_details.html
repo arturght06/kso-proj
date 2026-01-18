@@ -51,8 +51,19 @@
 </div>
 
 <div class="card">
-    <h3>Recent Logs for {{ host.hostname }}</h3>
-    <table>
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+        <h3 style="margin: 0;">Recent Logs for {{ host.hostname }}</h3>
+        
+        <form method="GET" action="{{ url_for('host_details', host_id=host.id) }}" style="display: flex; gap: 5px;">
+            <input type="text" name="q" value="{{ search_query }}" placeholder="Search logs..." style="padding: 6px; border: 1px solid #ccc; border-radius: 4px;">
+            <button type="submit" class="btn" style="padding: 6px 12px; font-size: 0.9em;">Search</button>
+            {% if search_query %}
+                <a href="{{ url_for('host_details', host_id=host.id) }}" class="btn" style="background: #95a5a6; padding: 6px 12px; font-size: 0.9em;">Clear</a>
+            {% endif %}
+        </form>
+    </div>
+
+    <table id="logs-table">
         <thead>
             <tr>
                 <th>Time</th>
