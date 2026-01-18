@@ -3,55 +3,36 @@
 {% block content %}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
 <script type="text/javascript">
-    // Zmiana limitu w URL
+    // Zmiana limitu logów w URL
     function changeLimit(limit) {
         const url = new URL(window.location.href);
         url.searchParams.set('limit', limit);
         window.location.href = url.toString();
     }
 
-    // Funkcja przełączająca widoczność detali
+    // Przełączanie widoczności surowego loga
     function toggleDetails(id) {
         var rowId = "raw-" + id;
         var row = document.getElementById(rowId);
         if (row) {
-            // Przełączamy między 'table-row' a 'none'
-            if (row.style.display === "none" || row.style.display === "") {
-                row.style.display = "table-row";
-            } else {
-                row.style.display = "none";
-            }
+            row.style.display = (row.style.display === "none" || row.style.display === "") ? "table-row" : "none";
         }
     }
 
+    // --- LOGIKA WYKRESU I DAT ---
     function initChart() {
         const hostId = {{ host.id }};
-        const fromInput = document.getElementById('date_from');
-        const toInput = document.getElementById('date_to');
+        
+        // Inputy są teraz wypełnione przez backend (Jinja2), więc po prostu bierzemy ich wartość
+        const fromVal = document.getElementById('date_from').value;
+        const toVal = document.getElementById('date_to').value;
+        
         const chartImg = document.getElementById('chart-img');
         const spinner = document.getElementById('chart-spinner');
         const pdfBtn = document.getElementById('pdf-btn');
 
-        const urlParams = new URLSearchParams(window.location.search);
-        
-        if (!fromInput.value) {
-            if (urlParams.get('date_from')) {
-                fromInput.value = urlParams.get('date_from');
-            } else {
-                const yesterday = new Date(new Date().getTime() - (24 * 60 * 60 * 1000));
-                fromInput.value = new Date(yesterday.getTime() - (yesterday.getTimezoneOffset() * 60000)).toISOString().slice(0, 16);
-            }
-        }
-
-        if (!toInput.value) {
-            if (urlParams.get('date_to')) {
-                toInput.value = urlParams.get('date_to');
-            } else {
-                const now = new Date();
-                toInput.value = new Date(now.getTime() - (now.getTimezoneOffset() * 60000)).toISOString().slice(0, 16);
-            }
-        }
-        const chartUrl = `/host/${hostId}/chart_image?date_from=${fromInput.value}&date_to=${toInput.value}`;
+        // Budujemy URL do endpointu obrazka używając wartości z formularza
+        const chartUrl = `/host/${hostId}/chart_image?date_from=${fromVal}&date_to=${toVal}`;
         
         chartImg.onload = function() {
             spinner.style.display = 'none';
@@ -60,11 +41,15 @@
         
         chartImg.onerror = function() {
             spinner.style.display = 'none';
+            // Opcjonalnie można pokazać tekst "No data"
         };
+        
+        // Uruchamiamy ładowanie obrazka
         chartImg.src = chartUrl;
 
+        // Aktualizacja linku PDF
         if(pdfBtn) {
-            pdfBtn.href = `/host/${hostId}/report?date_from=${fromInput.value}&date_to=${toInput.value}`;
+            pdfBtn.href = `/host/${hostId}/report?date_from=${fromVal}&date_to=${toVal}`;
         }
     }
 
@@ -73,7 +58,6 @@
         var currentHostId = {{ host.id }};
 
         socket.on('connect', function() {
-            // Żądamy streamu tylko dla tego hosta
             socket.emit('start_monitoring', { 'host_id': currentHostId });
         });
 
@@ -96,11 +80,9 @@
             var tableBody = document.querySelector("#logs-table tbody");
             if (!tableBody) return;
 
-            // Używamy ID z backendu (jeśli jest) lub generujemy tymczasowe
             var logId = data.id || ("gen-" + Date.now());
 
-            // --- Parsowanie JS (Regex) ---
-            // Wyciągamy detale z surowego stringa message, żeby tabela live wyglądała jak ta z bazy
+            // Parsowanie JS (Regex)
             let keyLabel = "unknown";
             let executable = "";
             let uid = "";
@@ -119,7 +101,7 @@
             if (data.severity === 'critical') color = 'red';
             else if (data.severity === 'warning') color = 'orange';
 
-            // 1. Wstawiamy Wiersz Główny
+            // 1. Wiersz Główny
             var row = tableBody.insertRow(0);
             row.style.backgroundColor = "#e8f5e9";
             setTimeout(() => { 
@@ -129,21 +111,17 @@
 
             row.innerHTML = `
                 <td>${data.timestamp}</td>
-                
                 <td>
                     <span style="background: #eef2f3; padding: 2px 6px; border-radius: 4px; font-family: monospace; color: #2c3e50;">
                         ${keyLabel}
                     </span>
                 </td>
-
                 <td>
                     ${executable ? `<div style="font-size: 0.9em; font-weight: bold;">${executable}</div>` : ''}
                     ${uid ? `<div style="font-size: 0.8em; color: #7f8c8d;">${uid}</div>` : ''}
                     ${!executable && !uid ? '<span style="color: #ccc;">-</span>' : ''}
                 </td>
-
                 <td style="font-weight: bold; color: ${color}">${data.severity}</td>
-                
                 <td>
                     <button onclick="toggleDetails('${logId}')" class="btn" style="padding: 4px 10px; font-size: 0.8em; background: #34495e;">
                         Details
@@ -151,9 +129,9 @@
                 </td>
             `;
 
-            // 2. Wstawiamy Ukryty Wiersz (Raw Message)
+            // 2. Wiersz Ukryty (Raw Message)
             var rawRow = tableBody.insertRow(1);
-            rawRow.id = "raw-" + logId; // ID pasujące do toggleDetails
+            rawRow.id = "raw-" + logId;
             rawRow.style.display = "none";
             rawRow.style.backgroundColor = "#f8f9fa";
             rawRow.innerHTML = `
@@ -164,7 +142,7 @@
                 </td>
             `;
 
-            // 3. Utrzymanie limitu wierszy (limit * 2, bo każdy log to 2 wiersze)
+            // Utrzymanie limitu wierszy
             const urlParams = new URLSearchParams(window.location.search);
             const limit = parseInt(urlParams.get('limit')) || 20;
             
@@ -172,6 +150,9 @@
                 tableBody.deleteRow(tableBody.rows.length - 1);
             }
         });
+
+        // INICJALIZACJA WYKRESU
+        initChart();
     });
 </script>
 
@@ -237,12 +218,14 @@
             <div style="display: flex; flex-direction: column;">
                 <label for="date_from" style="font-size: 0.8em; color: #666;">From:</label>
                 <input type="datetime-local" id="date_from" name="date_from" 
+                       value="{{ date_from }}" 
                        style="padding: 4px; border: 1px solid #ccc; border-radius: 4px;">
             </div>
 
             <div style="display: flex; flex-direction: column;">
                 <label for="date_to" style="font-size: 0.8em; color: #666;">To:</label>
                 <input type="datetime-local" id="date_to" name="date_to" 
+                       value="{{ date_to }}" 
                        style="padding: 4px; border: 1px solid #ccc; border-radius: 4px;">
             </div>
 
@@ -251,11 +234,9 @@
     </div>
 
     <div style="width: 100%; overflow-x: auto; text-align: center; min-height: 250px; position: relative;">
-        
-        <div id="chart-spinner" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #7f8c8d; font-family: sans-serif;">
+        <div id="chart-spinner" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #7f8c8d;">
             Loading chart...
         </div>
-        
         <img id="chart-img" src="" alt="Logs Chart" 
              style="display: none; max-width: 100%; height: auto; border: 1px solid #eee; border-radius: 4px;">
     </div>
@@ -274,10 +255,13 @@
         <div style="display: flex; gap: 10px;">
             <form method="GET" action="{{ url_for('host_details', host_id=host.id) }}" style="display: flex; gap: 5px;">
                 <input type="hidden" name="limit" value="{{ current_limit }}">
-                <input type="text" name="q" value="{{ search_query }}" placeholder="Search..." style="padding: 6px; border: 1px solid #ccc; border-radius: 4px;">
+                <input type="hidden" name="date_from" value="{{ date_from }}">
+                <input type="hidden" name="date_to" value="{{ date_to }}">
+                
+                <input type="text" name="q" value="{{ search_query }}" placeholder="Search logs..." style="padding: 6px; border: 1px solid #ccc; border-radius: 4px;">
                 <button type="submit" class="btn" style="padding: 6px 12px; font-size: 0.9em;">Search</button>
                 {% if search_query %}
-                    <a href="{{ url_for('host_details', host_id=host.id) }}" class="btn" style="background: #95a5a6; padding: 6px 12px; font-size: 0.9em;">Clear</a>
+                    <a href="{{ url_for('host_details', host_id=host.id, date_from=date_from, date_to=date_to, limit=current_limit) }}" class="btn" style="background: #95a5a6; padding: 6px 12px; font-size: 0.9em;">Clear</a>
                 {% endif %}
             </form>
 
@@ -304,13 +288,11 @@
             {% for log in logs %}
             <tr>
                 <td>{{ log.timestamp.strftime('%H:%M:%S') }}</td>
-                
                 <td>
                     <span style="background: #eef2f3; padding: 2px 6px; border-radius: 4px; font-family: monospace; color: #2c3e50;">
                         {{ log.details.get('key_label', 'unknown') if log.details else 'unknown' }}
                     </span>
                 </td>
-
                 <td>
                     {% if log.details and log.details.get('executable') %}
                         <div style="font-size: 0.9em; font-weight: bold;">{{ log.details.get('executable') }}</div>
@@ -322,11 +304,9 @@
                         <span style="color: #ccc;">-</span>
                     {% endif %}
                 </td>
-
                 <td style="font-weight: bold; color: {{ 'red' if log.severity.value == 'critical' else 'orange' if log.severity.value == 'warning' else 'black' }}">
                     {{ log.severity.value }}
                 </td>
-
                 <td>
                     <button onclick="toggleDetails('{{ log.id }}')" class="btn" style="padding: 4px 10px; font-size: 0.8em; background: #34495e;">
                         Details
