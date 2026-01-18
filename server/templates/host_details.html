@@ -10,27 +10,30 @@
         window.location.href = url.toString();
     }
 
-    // Pokazywanie/ukrywanie wiersza z surowym logiem
+    // Funkcja przełączająca widoczność detali
     function toggleDetails(id) {
         var rowId = "raw-" + id;
         var row = document.getElementById(rowId);
         if (row) {
-            row.style.display = (row.style.display === "none" || row.style.display === "") ? "table-row" : "none";
+            // Przełączamy między 'table-row' a 'none'
+            if (row.style.display === "none" || row.style.display === "") {
+                row.style.display = "table-row";
+            } else {
+                row.style.display = "none";
+            }
         }
     }
 
     document.addEventListener("DOMContentLoaded", function() {
         var socket = io();
-        // Pobieramy ID hosta z szablonu Jinja
         var currentHostId = {{ host.id }};
 
         socket.on('connect', function() {
-            console.log("Connected to Host Details. ID: " + currentHostId);
             // Żądamy streamu tylko dla tego hosta
             socket.emit('start_monitoring', { 'host_id': currentHostId });
         });
 
-        // Aktualizacja statusu (Online/Offline)
+        // Aktualizacja statusu
         socket.on('host_status_update', function(data) {
             if (data.host_id !== currentHostId) return;
 
@@ -44,15 +47,16 @@
             if (lastSeenSpan) lastSeenSpan.innerText = data.last_seen;
         });
 
-        // Obsługa nowego loga (LIVE)
+        // --- OBSŁUGA NOWEGO LOGA (LIVE) ---
         socket.on('new_log', function(data) {
             var tableBody = document.querySelector("#logs-table tbody");
             if (!tableBody) return;
 
-            // Używamy ID z backendu lub generujemy tymczasowe
+            // Używamy ID z backendu (jeśli jest) lub generujemy tymczasowe
             var logId = data.id || ("gen-" + Date.now());
 
-            // --- Parsowanie JS (Regex) żeby wyciągnąć detale z message ---
+            // --- Parsowanie JS (Regex) ---
+            // Wyciągamy detale z surowego stringa message, żeby tabela live wyglądała jak ta z bazy
             let keyLabel = "unknown";
             let executable = "";
             let uid = "";
@@ -71,7 +75,7 @@
             if (data.severity === 'critical') color = 'red';
             else if (data.severity === 'warning') color = 'orange';
 
-            // 1. Wiersz Główny
+            // 1. Wstawiamy Wiersz Główny
             var row = tableBody.insertRow(0);
             row.style.backgroundColor = "#e8f5e9";
             setTimeout(() => { 
@@ -103,9 +107,9 @@
                 </td>
             `;
 
-            // 2. Wiersz Ukryty (Raw)
+            // 2. Wstawiamy Ukryty Wiersz (Raw Message)
             var rawRow = tableBody.insertRow(1);
-            rawRow.id = "raw-" + logId;
+            rawRow.id = "raw-" + logId; // ID pasujące do toggleDetails
             rawRow.style.display = "none";
             rawRow.style.backgroundColor = "#f8f9fa";
             rawRow.innerHTML = `
@@ -116,7 +120,7 @@
                 </td>
             `;
 
-            // Utrzymanie limitu wierszy
+            // 3. Utrzymanie limitu wierszy (limit * 2, bo każdy log to 2 wiersze)
             const urlParams = new URLSearchParams(window.location.search);
             const limit = parseInt(urlParams.get('limit')) || 20;
             
@@ -141,8 +145,6 @@
 
 <div class="card">
     <h3>Audit Rules Configuration</h3>
-    <p style="font-size: 0.9em; color: #666;">Changes are synced every heartbeat (5s).</p>
-    
     <table>
         <thead>
             <tr>
@@ -167,7 +169,6 @@
             {% endfor %}
         </tbody>
     </table>
-
     <h4 style="margin-top: 20px;">Add New Rule</h4>
     <form action="{{ url_for('add_rule_to_host', host_id=host.id) }}" method="POST" style="display: flex; gap: 10px;">
         <input type="text" name="path" placeholder="/path/to/monitor" required style="flex: 2; padding: 8px;">
@@ -183,22 +184,21 @@
 
 <div class="card">
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-        <h3 style="margin: 0;">Recent Logs</h3>
+        <h3 style="margin: 0;">Recent Logs for {{ host.hostname }}</h3>
         
         <div style="display: flex; gap: 10px;">
             <form method="GET" action="{{ url_for('host_details', host_id=host.id) }}" style="display: flex; gap: 5px;">
                 <input type="hidden" name="limit" value="{{ current_limit }}">
-                <input type="text" name="q" value="{{ search_query }}" placeholder="Search logs..." style="padding: 6px; border: 1px solid #ccc; border-radius: 4px;">
+                <input type="text" name="q" value="{{ search_query }}" placeholder="Search..." style="padding: 6px; border: 1px solid #ccc; border-radius: 4px;">
                 <button type="submit" class="btn" style="padding: 6px 12px; font-size: 0.9em;">Search</button>
                 {% if search_query %}
                     <a href="{{ url_for('host_details', host_id=host.id) }}" class="btn" style="background: #95a5a6; padding: 6px 12px; font-size: 0.9em;">Clear</a>
                 {% endif %}
             </form>
 
-            <select onchange="changeLimit(this.value)" style="padding: 5px; border-radius: 4px; border: 1px solid #ccc;">
-                {% set current_limit = request.args.get('limit', 20)|int %}
+            <select id="limit-select" onchange="changeLimit(this.value)" style="padding: 5px; border-radius: 4px; border: 1px solid #ccc;">
                 <option value="10" {% if current_limit == 10 %}selected{% endif %}>10</option>
-                <option value="20" {% if current_limit == 20 %}selected{% endif %}>20</option>
+                <option value="20" {% if current_limit == 20 %}selected{% endif %}>20 (Default)</option>
                 <option value="50" {% if current_limit == 50 %}selected{% endif %}>50</option>
                 <option value="100" {% if current_limit == 100 %}selected{% endif %}>100</option>
             </select>
@@ -209,60 +209,53 @@
         <thead>
             <tr>
                 <th style="width: 15%;">Time</th>
-                <th style="width: 20%;">Event Key</th>
-                <th style="width: 30%;">Executable / User</th>
-                <th style="width: 15%;">Severity</th>
+                <th style="width: 15%;">Event Key</th>
+                <th style="width: 25%;">Executable / User</th>
+                <th style="width: 10%;">Severity</th>
                 <th style="width: 10%;">Action</th>
             </tr>
         </thead>
         <tbody>
-            {% if logs %}
-                {% for log in logs %}
-                <tr>
-                    <td>{{ log.timestamp.strftime('%H:%M:%S') }}</td>
-                    
-                    <td>
-                        <span style="background: #eef2f3; padding: 2px 6px; border-radius: 4px; font-family: monospace; color: #2c3e50;">
-                            {{ log.details.get('key_label', 'unknown') if log.details else 'unknown' }}
-                        </span>
-                    </td>
-
-                    <td>
-                        {% if log.details and log.details.get('executable') %}
-                            <div style="font-size: 0.9em; font-weight: bold;">{{ log.details.get('executable') }}</div>
-                        {% endif %}
-                        {% if log.details and log.details.get('uid') %}
-                            <div style="font-size: 0.8em; color: #7f8c8d;">UID: {{ log.details.get('uid') }}</div>
-                        {% endif %}
-                        {% if not log.details or (not log.details.get('executable') and not log.details.get('uid')) %}
-                            <span style="color: #ccc;">-</span>
-                        {% endif %}
-                    </td>
-
-                    <td style="font-weight: bold; color: {{ 'red' if log.severity.value == 'critical' else 'orange' if log.severity.value == 'warning' else 'black' }}">
-                        {{ log.severity.value }}
-                    </td>
-
-                    <td>
-                        <button onclick="toggleDetails('{{ log.id }}')" class="btn" style="padding: 4px 10px; font-size: 0.8em; background: #34495e;">
-                            Details
-                        </button>
-                    </td>
-                </tr>
+            {% for log in logs %}
+            <tr>
+                <td>{{ log.timestamp.strftime('%H:%M:%S') }}</td>
                 
-                <tr id="raw-{{ log.id }}" style="display: none; background-color: #f8f9fa;">
-                    <td colspan="5" style="padding: 10px;">
-                        <div style="font-family: monospace; font-size: 0.85em; white-space: pre-wrap; word-break: break-all; color: #555;">
-                            <strong>Raw Message:</strong><br>{{ log.message }}
-                        </div>
-                    </td>
-                </tr>
-                {% endfor %}
-            {% else %}
-                <tr>
-                    <td colspan="5" style="text-align: center; padding: 20px; color: #777;">No logs found matching criteria.</td>
-                </tr>
-            {% endif %}
+                <td>
+                    <span style="background: #eef2f3; padding: 2px 6px; border-radius: 4px; font-family: monospace; color: #2c3e50;">
+                        {{ log.details.get('key_label', 'unknown') if log.details else 'unknown' }}
+                    </span>
+                </td>
+
+                <td>
+                    {% if log.details and log.details.get('executable') %}
+                        <div style="font-size: 0.9em; font-weight: bold;">{{ log.details.get('executable') }}</div>
+                    {% endif %}
+                    {% if log.details and log.details.get('uid') %}
+                        <div style="font-size: 0.8em; color: #7f8c8d;">UID: {{ log.details.get('uid') }}</div>
+                    {% endif %}
+                     {% if not log.details or (not log.details.get('executable') and not log.details.get('uid')) %}
+                        <span style="color: #ccc;">-</span>
+                    {% endif %}
+                </td>
+
+                <td style="font-weight: bold; color: {{ 'red' if log.severity.value == 'critical' else 'orange' if log.severity.value == 'warning' else 'black' }}">
+                    {{ log.severity.value }}
+                </td>
+
+                <td>
+                    <button onclick="toggleDetails('{{ log.id }}')" class="btn" style="padding: 4px 10px; font-size: 0.8em; background: #34495e;">
+                        Details
+                    </button>
+                </td>
+            </tr>
+            <tr id="raw-{{ log.id }}" style="display: none; background-color: #f8f9fa;">
+                <td colspan="5" style="padding: 10px;">
+                    <div style="font-family: monospace; font-size: 0.85em; white-space: pre-wrap; word-break: break-all; color: #555;">
+                        <strong>Raw Message:</strong><br>{{ log.message }}
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
         </tbody>
     </table>
 </div>
