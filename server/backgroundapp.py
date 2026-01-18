@@ -74,6 +74,7 @@ def get_config(hostname):
 # --- MODUŁ: Odbiornik Syslog (TCP Server) ---
 def parse_and_save_log(raw_data):
     try:
+        # Rozdzielamy Hostname od reszty wiadomości
         parts = raw_data.strip().split(' ', 1)
         if len(parts) < 2:
             return
@@ -81,23 +82,35 @@ def parse_and_save_log(raw_data):
         hostname = parts[0]
         message = parts[1]
         
-        # Filtrowanie (opcjonalne, zależne od potrzeb)
-        # if 'type=SYSCALL' not in message and 'type=EXECVE' not in message:
-        #      pass
+        # --- NOWE FILTROWANIE ---
+        # 1. Jeśli wiadomość nie zawiera "key=", to nie jest to log z naszej reguły auditd.
+        #    To eliminuje szum systemowy (cron, systemd, sshd itp.)
+        if 'key=' not in message:
+            return
+
+        # 2. Ignorujemy logi techniczne auditd (np. CONFIG_CHANGE, DAEMON_START)
+        #    Interesują nas tylko wywołania systemowe (SYSCALL) i uruchamianie plików (EXECVE)
+        if 'type=SYSCALL' not in message and 'type=EXECVE' not in message:
+             return
+        # ------------------------
         
+        # Wyciąganie klucza
         key_match = re.search(r'key="?(\w+)"?', message)
         key_label = key_match.group(1) if key_match else "unknown"
 
+        # Wyciąganie EXE
         exe_match = re.search(r'exe="([^"]+)"', message)
         executable = exe_match.group(1) if exe_match else None
 
+        # Wyciąganie UID
         uid_match = re.search(r'uid=(\d+)', message)
         uid = uid_match.group(1) if uid_match else None
 
         with app.app_context():
             host = Host.query.filter_by(hostname=hostname).first()
             if not host:
-                print(f"[Syslog] Unknown host: {hostname}")
+                # Opcjonalnie: Auto-rejestracja hosta jeśli nieznany (dla wygody)
+                # print(f"[Syslog] Ignored log from unknown host: {hostname}")
                 return
 
             details = {
