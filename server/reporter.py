@@ -1,23 +1,25 @@
 import matplotlib
-matplotlib.use('Agg') # Backend bez GUI
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import io
 import base64
+import os
+import tempfile
 import numpy as np
 from scipy.interpolate import make_interp_spline
 from sqlalchemy import func
-from models import db, LogEntry
+from models import db, LogEntry, Host
+from fpdf import FPDF
 from datetime import datetime
 
 def generate_host_chart(host_id, start_date, end_date):
     """
     Generuje wykres typu 'Spline' (gładka krzywa) w formacie Base64.
-    Agregacja: Minutowa (dla większej dokładności).
     """
     img = io.BytesIO()
     
-    # 1. Znajdź 10 najpopularniejszych kluczy (bez zmian)
+    # 1. Znajdź 10 najpopularniejszych kluczy
     top_keys_query = db.session.query(
         LogEntry.details['key_label'].astext, 
         func.count(LogEntry.id)
@@ -34,8 +36,7 @@ def generate_host_chart(host_id, start_date, end_date):
 
     top_keys = [r[0] for r in top_keys_query]
 
-    # 2. Pobierz dane agregowane co MINUTĘ (zwiększenie liczby punktów)
-    # Zmieniono 'hour' na 'minute' w date_trunc
+    # 2. Pobierz dane agregowane co minutę
     raw_data = db.session.query(
         func.date_trunc('minute', LogEntry.timestamp),
         LogEntry.details['key_label'].astext,
@@ -50,69 +51,135 @@ def generate_host_chart(host_id, start_date, end_date):
         LogEntry.details['key_label'].astext
     ).order_by(func.date_trunc('minute', LogEntry.timestamp)).all()
 
-    # 3. Organizacja danych
+    # 3. Przetwarzanie
     data_map = {key: {'x': [], 'y': []} for key in top_keys}
-    
     for row in raw_data:
         timestamp, key, count = row
         if key in data_map:
             data_map[key]['x'].append(timestamp)
             data_map[key]['y'].append(count)
 
-    # 4. Rysowanie (Stylizacja Curve)
-    plt.figure(figsize=(12, 4)) # Nieco szerszy
+    # 4. Rysowanie
+    plt.figure(figsize=(12, 4))
     
     for key in top_keys:
         x_dates = data_map[key]['x']
         y_vals = data_map[key]['y']
 
         if len(x_dates) > 3:
-            # --- ALGORYTM WYGŁADZANIA (CURVE) ---
-            
-            # 1. Konwersja dat na liczby (dla matematyki)
-            x_nums = mdates.date2num(x_dates)
-            x_np = np.array(x_nums)
-            y_np = np.array(y_vals)
-
-            # 2. Tworzenie gęstej siatki punktów (300 punktów dla gładkości)
-            x_new = np.linspace(x_np.min(), x_np.max(), 300) 
-            
+            # Wygładzanie (Spline)
             try:
-                # 3. Interpolacja B-Spline (k=3 to sześcienna, gładka)
+                x_nums = mdates.date2num(x_dates)
+                x_np = np.array(x_nums)
+                y_np = np.array(y_vals)
+                x_new = np.linspace(x_np.min(), x_np.max(), 300) 
                 spl = make_interp_spline(x_np, y_np, k=3)
-                y_smooth = spl(x_new)
-
-                # 4. Zapobieganie wartościom ujemnym (efekt uboczny spline'ów)
-                y_smooth = y_smooth.clip(min=0)
-
-                # Rysowanie gładkiej linii
+                y_smooth = spl(x_new).clip(min=0)
                 plt.plot(mdates.num2date(x_new), y_smooth, label=key, linewidth=2, alpha=0.8)
-            except Exception as e:
-                # Fallback: jeśli matematyka zawiedzie (np. zduplikowane x), rysuj zwykłą linię
-                print(f"Spline error for {key}: {e}")
+            except:
                 plt.plot(x_dates, y_vals, label=key, marker='.', linestyle='-')
-        
         elif len(x_dates) > 0:
-            # Za mało punktów na krzywą -> rysuj prostą linię
             plt.plot(x_dates, y_vals, label=key, marker='o', linestyle='-')
 
-    # Formatowanie wykresu
-    title_date_fmt = "%Y-%m-%d %H:%M"
-    plt.title(f'Event Trend (Minute Precision) - {start_date.strftime(title_date_fmt)} to {end_date.strftime(title_date_fmt)}')
+    plt.title(f'Event Trend - {start_date.strftime("%Y-%m-%d %H:%M")} to {end_date.strftime("%Y-%m-%d %H:%M")}')
     plt.xlabel('Time')
-    plt.ylabel('Events per Minute')
-    
-    # Formatowanie osi X (żeby daty się nie nakładały)
+    plt.ylabel('Events/Min')
     plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
     plt.gcf().autofmt_xdate()
-    
     plt.grid(True, linestyle=':', alpha=0.6)
     plt.legend(bbox_to_anchor=(1.01, 1), loc='upper left', borderaxespad=0.)
     plt.tight_layout()
     
-    img = io.BytesIO()
-    plt.savefig(img, format='png', dpi=100) # dpi=100 dla lepszej jakości
+    plt.savefig(img, format='png', dpi=100)
     plt.close()
     img.seek(0)
     
     return base64.b64encode(img.getvalue()).decode('utf8')
+
+def generate_pdf_report(host_id, date_from, date_to):
+    """
+    Tworzy kompletny raport PDF (wykres + tabela) i zwraca bufor pliku oraz nazwę.
+    """
+    host = Host.query.get(host_id)
+    if not host:
+        return None, None
+
+    # 1. Generowanie Wykresu (Base64)
+    chart_base64 = generate_host_chart(host_id, date_from, date_to)
+
+    # 2. Pobieranie danych (Logi)
+    logs = LogEntry.query.filter_by(host_id=host_id)\
+        .filter(LogEntry.timestamp >= date_from, LogEntry.timestamp <= date_to)\
+        .order_by(LogEntry.timestamp.desc()).limit(100).all()
+
+    # 3. Tworzenie PDF
+    pdf = FPDF()
+    pdf.add_page()
+    
+    # Nagłówek
+    pdf.set_font("Arial", 'B', 16)
+    pdf.cell(0, 10, f"Security Audit Report: {host.hostname}", ln=True, align='C')
+    
+    pdf.set_font("Arial", size=10)
+    now_str = datetime.now().strftime('%Y-%m-%d %H:%M')
+    pdf.cell(0, 10, f"Host IP: {host.ip_address} | Generated: {now_str}", ln=True, align='C')
+    pdf.cell(0, 10, f"Period: {date_from.strftime('%Y-%m-%d %H:%M')} to {date_to.strftime('%Y-%m-%d %H:%M')}", ln=True, align='C')
+    
+    pdf.ln(10)
+
+    # Wstawianie obrazka
+    if chart_base64:
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp_file:
+            tmp_file.write(base64.b64decode(chart_base64))
+            tmp_path = tmp_file.name
+        
+        try:
+            pdf.image(tmp_path, x=10, w=190)
+        finally:
+            os.unlink(tmp_path) # Sprzątanie
+        pdf.ln(10)
+
+    # Tabela Logów
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(0, 10, "Event Log (Last 100 entries)", ln=True)
+    
+    # Nagłówki tabeli
+    pdf.set_font("Arial", 'B', 10)
+    pdf.set_fill_color(220, 220, 220)
+    pdf.cell(35, 7, "Time", 1, 0, 'C', True)
+    pdf.cell(25, 7, "Severity", 1, 0, 'C', True)
+    pdf.cell(35, 7, "Program", 1, 0, 'C', True)
+    pdf.cell(95, 7, "Message Preview", 1, 1, 'C', True)
+
+    # Wiersze
+    pdf.set_font("Arial", size=8)
+    for log in logs:
+        # Sanityzacja tekstu (latin-1 safe)
+        safe_msg = log.message.encode('latin-1', 'replace').decode('latin-1')[:55] + "..."
+        safe_prog = log.program.encode('latin-1', 'replace').decode('latin-1')
+        
+        # Kolory
+        if log.severity.value == 'critical':
+            pdf.set_text_color(192, 57, 43)
+        elif log.severity.value == 'warning':
+            pdf.set_text_color(211, 84, 0)
+        else:
+            pdf.set_text_color(0, 0, 0)
+
+        pdf.cell(35, 7, str(log.timestamp.strftime('%Y-%m-%d %H:%M')), 1)
+        pdf.cell(25, 7, log.severity.value.upper(), 1, 0, 'C')
+        pdf.cell(35, 7, safe_prog, 1)
+        pdf.cell(95, 7, safe_msg, 1, 1)
+
+    # Zapis do bufora
+    buffer = io.BytesIO()
+    pdf_bytes = pdf.output(dest='S').encode('latin-1')
+    buffer.write(pdf_bytes)
+    buffer.seek(0)
+
+    # Nazwa pliku
+    s_str = date_from.strftime('%m-%d')
+    e_str = date_to.strftime('%m-%d')
+    filename = f"report_{host.hostname}_{s_str}_{e_str}.pdf"
+
+    return buffer, filename

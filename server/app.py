@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, render_template, redirect, url_for, flash
+from flask import Flask, request, jsonify, render_template, redirect, url_for, flash, send_file
 from flask_login import LoginManager, login_user, login_required, logout_user, current_user
 from flask_socketio import SocketIO, emit
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -8,7 +8,7 @@ from datetime import timedelta
 import os
 from dotenv import load_dotenv
 from sqlalchemy import func
-from reporter import generate_host_chart
+from reporter import generate_host_chart, generate_pdf_report
 
 
 load_dotenv()
@@ -201,6 +201,35 @@ def host_details(host_id):
         chart_data=chart_base64,
         date_from=date_from_str,
         date_to=date_to_str
+    )
+
+@app.route('/host/<int:host_id>/report')
+@login_required
+def download_report(host_id):
+    now = datetime.datetime.now()
+    default_start = now - timedelta(days=1)
+    
+    date_from_str = request.args.get('date_from', default_start.strftime('%Y-%m-%dT%H:%M'))
+    date_to_str = request.args.get('date_to', now.strftime('%Y-%m-%dT%H:%M'))
+
+    try:
+        date_from = datetime.datetime.strptime(date_from_str, '%Y-%m-%dT%H:%M')
+        date_to = datetime.datetime.strptime(date_to_str, '%Y-%m-%dT%H:%M')
+    except ValueError:
+        date_from = default_start
+        date_to = now
+
+    pdf_buffer, filename = generate_pdf_report(host_id, date_from, date_to)
+    
+    if not pdf_buffer:
+        flash("Could not generate report (Host not found or error).", "error")
+        return redirect(url_for('host_details', host_id=host_id))
+
+    return send_file(
+        pdf_buffer,
+        as_attachment=True,
+        download_name=filename,
+        mimetype='application/pdf'
     )
 
 @app.route('/host/<int:host_id>/add_rule', methods=['POST'])

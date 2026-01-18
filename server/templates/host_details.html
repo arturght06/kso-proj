@@ -208,6 +208,12 @@
         <div style="width: 100%; overflow-x: auto; text-align: center;">
             <img src="data:image/png;base64,{{ chart_data }}" alt="Logs Chart" style="max-width: 100%; height: auto; border: 1px solid #eee; border-radius: 4px;">
         </div>
+        
+        <div style="text-align: center; margin-top: 15px;">
+            <a href="{{ url_for('download_report', host_id=host.id, date_from=date_from, date_to=date_to) }}" class="btn" style="background: #e74c3c; padding: 10px 20px; font-weight: bold;">
+                📄 Download PDF Report
+            </a>
+        </div>
     {% else %}
         <div style="padding: 20px; text-align: center; color: #777; background: #f9f9f9; border-radius: 4px;">
             No data available for the selected time range to generate a chart.

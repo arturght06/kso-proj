@@ -10,3 +10,4 @@ eventlet
 matplotlib
 numpy
 scipy
+fpdf
