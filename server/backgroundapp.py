@@ -83,12 +83,25 @@ def receive_logs():
     entries = []
     for l in logs:
         severity_enum = getattr(Severity, l.get('severity', 'INFO').upper(), Severity.INFO)
+        
+        log_details = l.get('details', {})
+        timestamp_str = log_details.get('timestamp')
+        
+        entry_timestamp = datetime.now(timezone.utc)
+        
+        if timestamp_str:
+            try:
+                entry_timestamp = datetime.fromisoformat(timestamp_str)
+            except ValueError:
+                pass
+
         entry = LogEntry(
             host_id=host.id,
             program=l.get('program'),
             message=l.get('message'),
             severity=severity_enum,
-            details=l.get('details', {})
+            details=log_details,
+            timestamp=entry_timestamp
         )
         entries.append(entry)
     
