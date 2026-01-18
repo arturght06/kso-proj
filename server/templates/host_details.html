@@ -184,6 +184,39 @@
 
 <div class="card">
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+        <h3>Statistics & Trends</h3>
+        
+        <form method="GET" action="{{ url_for('host_details', host_id=host.id) }}" style="display: flex; align-items: center; gap: 10px;">
+            <input type="hidden" name="limit" value="{{ current_limit }}">
+            <input type="hidden" name="q" value="{{ search_query }}">
+
+            <div style="display: flex; flex-direction: column;">
+                <label for="date_from" style="font-size: 0.8em; color: #666;">From:</label>
+                <input type="datetime-local" id="date_from" name="date_from" value="{{ date_from }}" style="padding: 4px; border: 1px solid #ccc; border-radius: 4px;">
+            </div>
+
+            <div style="display: flex; flex-direction: column;">
+                <label for="date_to" style="font-size: 0.8em; color: #666;">To:</label>
+                <input type="datetime-local" id="date_to" name="date_to" value="{{ date_to }}" style="padding: 4px; border: 1px solid #ccc; border-radius: 4px;">
+            </div>
+
+            <button type="submit" class="btn" style="height: 36px; margin-top: 14px; background: #2c3e50;">Apply Filter</button>
+        </form>
+    </div>
+
+    {% if chart_data %}
+        <div style="width: 100%; overflow-x: auto; text-align: center;">
+            <img src="data:image/png;base64,{{ chart_data }}" alt="Logs Chart" style="max-width: 100%; height: auto; border: 1px solid #eee; border-radius: 4px;">
+        </div>
+    {% else %}
+        <div style="padding: 20px; text-align: center; color: #777; background: #f9f9f9; border-radius: 4px;">
+            No data available for the selected time range to generate a chart.
+        </div>
+    {% endif %}
+</div>
+
+<div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
         <h3 style="margin: 0;">Recent Logs for {{ host.hostname }}</h3>
         
         <div style="display: flex; gap: 10px;">

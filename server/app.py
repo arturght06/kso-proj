@@ -4,9 +4,12 @@ from flask_socketio import SocketIO, emit
 from werkzeug.security import generate_password_hash, check_password_hash
 from models import db, Host, LogEntry, MonitoringRule, User, Severity
 import datetime
+from datetime import timedelta
 import os
 from dotenv import load_dotenv
 from sqlalchemy import func
+from reporter import generate_host_chart
+
 
 load_dotenv()
 
@@ -163,6 +166,25 @@ def host_details(host_id):
     query = LogEntry.query.filter_by(host_id=host.id)
     limit = request.args.get('limit', 20, type=int)
 
+    now = datetime.datetime.now()
+    default_start = now - timedelta(days=1)
+    
+    date_from_str = request.args.get('date_from', default_start.strftime('%Y-%m-%dT%H:%M'))
+    date_to_str = request.args.get('date_to', now.strftime('%Y-%m-%dT%H:%M'))
+
+    try:
+        date_from = datetime.datetime.strptime(date_from_str, '%Y-%m-%dT%H:%M')
+        date_to = datetime.datetime.strptime(date_to_str, '%Y-%m-%dT%H:%M')
+    except ValueError:
+        date_from = default_start
+        date_to = now
+
+    chart_base64 = generate_host_chart(host.id, date_from, date_to)
+
+    query = LogEntry.query.filter_by(host_id=host.id)
+    
+    query = query.filter(LogEntry.timestamp >= date_from, LogEntry.timestamp <= date_to)
+
     if search_query:
         query = query.filter(
             (LogEntry.message.ilike(f'%{search_query}%')) | 
@@ -170,7 +192,16 @@ def host_details(host_id):
         )
 
     logs = query.order_by(LogEntry.timestamp.desc()).limit(limit).all()
-    return render_template('host_details.html', host=host, logs=logs, search_query=search_query)
+    
+    return render_template('host_details.html', 
+        host=host, 
+        logs=logs, 
+        search_query=search_query, 
+        current_limit=limit,
+        chart_data=chart_base64,
+        date_from=date_from_str,
+        date_to=date_to_str
+    )
 
 @app.route('/host/<int:host_id>/add_rule', methods=['POST'])
 @login_required
