@@ -226,6 +226,13 @@ def host_chart_image(host_id):
     else:
         return "", 204
 
+    img_buffer = generate_host_chart(host_id, date_from, date_to)
+    
+    if img_buffer:
+        return send_file(img_buffer, mimetype='image/png')
+    else:
+        return "", 204
+
 @app.route('/host/<int:host_id>/report')
 @login_required
 def download_report(host_id):
