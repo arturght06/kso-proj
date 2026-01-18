@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import os
 from dotenv import load_dotenv
 from time import sleep
+# from reporter import generate_host_chart, generate_pdf_report # Odkomentuj jeśli używasz
 
 load_dotenv()
 
@@ -16,7 +17,6 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'secret_socket_key')
 
 db.init_app(app)
-
 
 def seed_data():
     if not MonitoringRule.query.first():
@@ -44,7 +44,6 @@ def heartbeat():
     host = Host.query.filter_by(hostname=hostname).first()
     if not host:
         host = Host(hostname=hostname, ip_address=ip)
-        # Auto-assign all rules to new host for MVP simplicity
         rules = MonitoringRule.query.all()
         host.rules.extend(rules)
         db.session.add(host)
@@ -72,14 +71,9 @@ def get_config(hostname):
     
     return jsonify({"rules": rules_data})
 
-
-
+# --- MODUŁ: Odbiornik Syslog (TCP Server) ---
 def parse_and_save_log(raw_data):
-    """
-    Parsuje linię otrzymaną z rsysloga: "HOSTNAME RAW_AUDIT_MSG"
-    """
     try:
-        # Rozdzielamy Hostname od reszty wiadomości (format zdefiniowany w rsyslog template)
         parts = raw_data.strip().split(' ', 1)
         if len(parts) < 2:
             return
@@ -87,24 +81,19 @@ def parse_and_save_log(raw_data):
         hostname = parts[0]
         message = parts[1]
         
-        # Parsowanie Auditd (Regex przeniesiony z Agenta)
-        if 'type=SYSCALL' not in message and 'type=EXECVE' not in message:
-             # Opcjonalnie ignorujemy inne logi
-             pass
+        # Filtrowanie (opcjonalne, zależne od potrzeb)
+        # if 'type=SYSCALL' not in message and 'type=EXECVE' not in message:
+        #      pass
         
-        # Wyciąganie klucza
         key_match = re.search(r'key="?(\w+)"?', message)
         key_label = key_match.group(1) if key_match else "unknown"
 
-        # Wyciąganie EXE
         exe_match = re.search(r'exe="([^"]+)"', message)
         executable = exe_match.group(1) if exe_match else None
 
-        # Wyciąganie UID
         uid_match = re.search(r'uid=(\d+)', message)
         uid = uid_match.group(1) if uid_match else None
 
-        # Zapis do Bazy
         with app.app_context():
             host = Host.query.filter_by(hostname=hostname).first()
             if not host:
@@ -123,99 +112,59 @@ def parse_and_save_log(raw_data):
                 host_id=host.id,
                 program="auditd",
                 message=message,
-                severity=Severity.WARNING, # Domyślnie warning dla auditd
+                severity=Severity.WARNING,
                 details=details,
                 timestamp=datetime.now(timezone.utc)
             )
             db.session.add(log_entry)
             db.session.commit()
-            # print(f"[Syslog] Saved log from {hostname}: {key_label}")
 
     except Exception as e:
         print(f"[Syslog Error] {e}")
 
 def syslog_server():
-    """
-    Wątek nasłuchujący na localhost:9999 na dane z lokalnego rsysloga
-    """
     HOST = '127.0.0.1'
     PORT = 9999
     
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind((HOST, PORT))
+        # ZMIANA 1: Pozwala na restart serwera bez błędu "Address already in use"
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        
+        try:
+            s.bind((HOST, PORT))
+        except OSError as e:
+            print(f"[Syslog] CRITICAL: Port {PORT} is busy. {e}")
+            return
+
         s.listen()
         print(f"[Syslog Listener] Listening on {HOST}:{PORT}")
         
         while True:
-            conn, addr = s.accept()
-            with conn:
-                buffer = ""
-                while True:
-                    data = conn.recv(1024)
-                    if not data:
-                        break
-                    
-                    # Rsyslog przesyła strumień, musimy dzielić po nowych liniach
-                    buffer += data.decode('utf-8', errors='ignore')
-                    while '\n' in buffer:
-                        line, buffer = buffer.split('\n', 1)
-                        if line:
-                            parse_and_save_log(line)
-
-
-
-
-@app.route('/api/logs', methods=['POST'])
-def receive_logs():
-    data = request.json
-    hostname = data.get('hostname')
-    logs = data.get('logs', [])
-    
-    host = Host.query.filter_by(hostname=hostname).first()
-    if not host:
-        return jsonify({"error": "Unknown host"}), 403
-
-    entries = []
-    for l in logs:
-        severity_enum = getattr(Severity, l.get('severity', 'INFO').upper(), Severity.INFO)
-        
-        log_details = l.get('details', {})
-        timestamp_str = log_details.get('timestamp')
-        
-        entry_timestamp = datetime.now(timezone.utc)
-        
-        if timestamp_str:
             try:
-                entry_timestamp = datetime.fromisoformat(timestamp_str)
-            except ValueError:
-                pass
-
-        entry = LogEntry(
-            host_id=host.id,
-            program=l.get('program'),
-            message=l.get('message'),
-            severity=severity_enum,
-            details=log_details,
-            timestamp=entry_timestamp
-        )
-        entries.append(entry)
-    
-    db.session.add_all(entries)
-    db.session.commit()
-    
-    return jsonify({"status": "received", "count": len(entries)})
+                conn, addr = s.accept()
+                with conn:
+                    buffer = ""
+                    while True:
+                        data = conn.recv(1024)
+                        if not data:
+                            break
+                        buffer += data.decode('utf-8', errors='ignore')
+                        while '\n' in buffer:
+                            line, buffer = buffer.split('\n', 1)
+                            if line:
+                                parse_and_save_log(line)
+            except Exception as e:
+                print(f"[Syslog Loop Error] {e}")
 
 if __name__ == '__main__':
     with app.app_context():
         db.create_all()
         seed_data()
     
-    # Uruchomienie wątku nasłuchującego logów
-    threading.Thread(target=syslog_server, daemon=True).start()
+    # ZMIANA 2: Uruchamiamy wątek TYLKO w procesie workera (po przeładowaniu), 
+    # a nie w głównym procesie nadzorczym. To eliminuje podwójne uruchomienie.
+    if os.environ.get("WERKZEUG_RUN_MAIN") == "true":
+        threading.Thread(target=syslog_server, daemon=True).start()
     
-    # Uruchomienie wątku analizy zagrożeń (jeśli masz)
-    # threading.Thread(target=analyze_threats, daemon=True).start()
-
+    # Jeśli uruchamiasz bez debug=True, musisz usunąć powyższy warunek if
     app.run(host='0.0.0.0', port=5555, debug=True)
-
-
