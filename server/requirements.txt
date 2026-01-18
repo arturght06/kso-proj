@@ -8,3 +8,5 @@ flask_login
 flask_socketio
 eventlet
 matplotlib
+numpy
+scipy
