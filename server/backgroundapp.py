@@ -1,6 +1,8 @@
 import threading
+import socket
+import re
 from flask import Flask, request, jsonify
-from models import db, Host, LogEntry, MonitoringRule, host_rules, Severity, User
+from models import db, Host, LogEntry, MonitoringRule, host_rules, Severity, User, Alert
 from datetime import datetime, timezone
 import os
 from dotenv import load_dotenv
@@ -70,6 +72,99 @@ def get_config(hostname):
     
     return jsonify({"rules": rules_data})
 
+
+
+def parse_and_save_log(raw_data):
+    """
+    Parsuje linię otrzymaną z rsysloga: "HOSTNAME RAW_AUDIT_MSG"
+    """
+    try:
+        # Rozdzielamy Hostname od reszty wiadomości (format zdefiniowany w rsyslog template)
+        parts = raw_data.strip().split(' ', 1)
+        if len(parts) < 2:
+            return
+        
+        hostname = parts[0]
+        message = parts[1]
+        
+        # Parsowanie Auditd (Regex przeniesiony z Agenta)
+        if 'type=SYSCALL' not in message and 'type=EXECVE' not in message:
+             # Opcjonalnie ignorujemy inne logi
+             pass
+        
+        # Wyciąganie klucza
+        key_match = re.search(r'key="?(\w+)"?', message)
+        key_label = key_match.group(1) if key_match else "unknown"
+
+        # Wyciąganie EXE
+        exe_match = re.search(r'exe="([^"]+)"', message)
+        executable = exe_match.group(1) if exe_match else None
+
+        # Wyciąganie UID
+        uid_match = re.search(r'uid=(\d+)', message)
+        uid = uid_match.group(1) if uid_match else None
+
+        # Zapis do Bazy
+        with app.app_context():
+            host = Host.query.filter_by(hostname=hostname).first()
+            if not host:
+                print(f"[Syslog] Unknown host: {hostname}")
+                return
+
+            details = {
+                "raw": message,
+                "key_label": key_label,
+                "executable": executable,
+                "uid": uid,
+                "timestamp": str(datetime.now(timezone.utc))
+            }
+
+            log_entry = LogEntry(
+                host_id=host.id,
+                program="auditd",
+                message=message,
+                severity=Severity.WARNING, # Domyślnie warning dla auditd
+                details=details,
+                timestamp=datetime.now(timezone.utc)
+            )
+            db.session.add(log_entry)
+            db.session.commit()
+            # print(f"[Syslog] Saved log from {hostname}: {key_label}")
+
+    except Exception as e:
+        print(f"[Syslog Error] {e}")
+
+def syslog_server():
+    """
+    Wątek nasłuchujący na localhost:9999 na dane z lokalnego rsysloga
+    """
+    HOST = '127.0.0.1'
+    PORT = 9999
+    
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind((HOST, PORT))
+        s.listen()
+        print(f"[Syslog Listener] Listening on {HOST}:{PORT}")
+        
+        while True:
+            conn, addr = s.accept()
+            with conn:
+                buffer = ""
+                while True:
+                    data = conn.recv(1024)
+                    if not data:
+                        break
+                    
+                    # Rsyslog przesyła strumień, musimy dzielić po nowych liniach
+                    buffer += data.decode('utf-8', errors='ignore')
+                    while '\n' in buffer:
+                        line, buffer = buffer.split('\n', 1)
+                        if line:
+                            parse_and_save_log(line)
+
+
+
+
 @app.route('/api/logs', methods=['POST'])
 def receive_logs():
     data = request.json
@@ -115,7 +210,12 @@ if __name__ == '__main__':
         db.create_all()
         seed_data()
     
-    # W produkcji tu musi być context SSL!
+    # Uruchomienie wątku nasłuchującego logów
+    threading.Thread(target=syslog_server, daemon=True).start()
+    
+    # Uruchomienie wątku analizy zagrożeń (jeśli masz)
+    # threading.Thread(target=analyze_threats, daemon=True).start()
+
     app.run(host='0.0.0.0', port=5555, debug=True)
 
 
