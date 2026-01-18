@@ -120,17 +120,19 @@
 <div class="card">
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
         <h3>Recent Audit Logs</h3>
-        
-        <div>
-            <label for="limit-select" style="margin-right: 5px;">Show:</label>
-            <select id="limit-select" onchange="changeLimit(this.value)" style="padding: 5px; border-radius: 4px; border: 1px solid #ccc;">
-                <option value="10" {% if current_limit == 10 %}selected{% endif %}>10</option>
-                <option value="20" {% if current_limit == 20 %}selected{% endif %}>20 (Default)</option>
-                <option value="50" {% if current_limit == 50 %}selected{% endif %}>50</option>
-                <option value="100" {% if current_limit == 100 %}selected{% endif %}>100</option>
-            </select>
-        </div>
-    </div>
+        <label for="limit-select">Show last:</label>
+        <select id="limit-select">
+            {% for val in [10, 20, 50, 100] %}
+                <option value="{{ val }}" {% if request.args.get('limit', 20, type=int) == val %}selected{% endif %}>{{ val }}</option>
+            {% endfor %}
+        </select>
+        <script>
+            document.getElementById('limit-select').addEventListener('change', function() {
+                const params = new URLSearchParams(window.location.search);
+                params.set('limit', this.value);
+                window.location.search = params.toString();
+            });
+        </script>
 
     {% if logs %}
         <table id="logs-table">
