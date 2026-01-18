@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 
 {% block content %}
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
 <script type="text/javascript">
     document.addEventListener("DOMContentLoaded", function() {
@@ -73,9 +74,51 @@
     <span id="host-status" style="font-size: 0.6em; vertical-align: middle; color: {{ '#27ae60' if host.is_online else '#c0392b' }}">
         {{ '(Online)' if host.is_online else '(Offline)' }}
     </span>
-</h2>
 
-<p>IP: {{ host.ip_address }} | Last Seen: <span id="host-last-seen">{{ host.last_heartbeat.strftime('%Y-%m-%d %H:%M:%S') }}</span></p>
+</h2>
+<p>IP: {{ host.ip_address }} | Last Seen: {{ host.last_heartbeat.strftime('%Y-%m-%d %H:%M:%S') }}</p>
+
+<div class="card">
+    <h3>Audit Rules Configuration</h3>
+    <p>Agenci pobiorą te zmiany przy następnym <i>heartbeat</i> (max 5s).</p>
+    
+    <table>
+        <thead>
+            <tr>
+                <th>Path</th>
+                <th>Permissions</th>
+                <th>Key</th>
+                <th>Action</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for rule in host.rules %}
+            <tr>
+                <td>{{ rule.path }}</td>
+                <td>{{ rule.permissions }}</td>
+                <td>{{ rule.key_label }}</td>
+                <td>
+                    <form action="{{ url_for('delete_rule_from_host', host_id=host.id, rule_id=rule.id) }}" method="POST" style="display:inline;">
+                        <button type="submit" style="background: #e74c3c; color: white; border: none; padding: 5px 10px; cursor: pointer; border-radius: 4px;">Remove</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <h4 style="margin-top: 20px;">Add New Rule</h4>
+    <form action="{{ url_for('add_rule_to_host', host_id=host.id) }}" method="POST" style="display: flex; gap: 10px;">
+        <input type="text" name="path" placeholder="/path/to/monitor" required style="flex: 2; padding: 8px;">
+        <select name="permissions" style="padding: 8px;">
+            <option value="wa">Write/Attribute (wa)</option>
+            <option value="rwxa">Read/Write/Exec/Attr (rwxa)</option>
+            <option value="x">Execute (x)</option>
+        </select>
+        <input type="text" name="key_label" placeholder="log_key_name" required style="flex: 1; padding: 8px;">
+        <button type="submit" class="btn" style="background: #27ae60;">Add Rule</button>
+    </form>
+</div>
 
 <div class="card">
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
