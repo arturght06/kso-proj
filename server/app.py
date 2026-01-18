@@ -144,8 +144,9 @@ def login():
 @app.route('/')
 @login_required
 def dashboard():
+    limit = request.args.get('limit', 20, type=int)
     hosts = Host.query.all()
-    recent_logs = LogEntry.query.order_by(LogEntry.timestamp.desc()).limit(20).all()
+    recent_logs = LogEntry.query.order_by(LogEntry.timestamp.desc()).limit(limit).all()
     return render_template('dashboard.html', hosts=hosts, logs=recent_logs)
 
 @app.route('/logout')
@@ -160,14 +161,15 @@ def host_details(host_id):
     host = Host.query.get_or_404(host_id)
     search_query = request.args.get('q', '')
     query = LogEntry.query.filter_by(host_id=host.id)
+    limit = request.args.get('limit', 20, type=int)
 
     if search_query:
         query = query.filter(
             (LogEntry.message.ilike(f'%{search_query}%')) | 
             (LogEntry.program.ilike(f'%{search_query}%'))
         )
-    
-    logs = query.order_by(LogEntry.timestamp.desc()).limit(50).all()
+
+    logs = query.order_by(LogEntry.timestamp.desc()).limit(limit).all()
     return render_template('host_details.html', host=host, logs=logs, search_query=search_query)
 
 @app.route('/host/<int:host_id>/add_rule', methods=['POST'])
