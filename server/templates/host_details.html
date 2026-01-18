@@ -1,49 +1,39 @@
 {% extends "base.html" %}
 
 {% block content %}
-
 <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
 <script type="text/javascript">
     document.addEventListener("DOMContentLoaded", function() {
         var socket = io();
-        
-        // Pobieramy ID hosta z szablonu Jinja do zmiennej JS
         var currentHostId = {{ host.id }};
 
         socket.on('connect', function() {
-            console.log("Connected. Requesting stream for Host ID: " + currentHostId);
-            // Wysyłamy żądanie monitorowania KONKRETNEGO hosta
+            console.log("Connected to Host Details. ID: " + currentHostId);
             socket.emit('start_monitoring', { 'host_id': currentHostId });
         });
 
-        // 1. Aktualizacja statusu
         socket.on('host_status_update', function(data) {
-            // Ignoruj, jeśli to update innego hosta (zabezpieczenie)
             if (data.host_id !== currentHostId) return;
-
             var statusSpan = document.getElementById("host-status");
             var lastSeenSpan = document.getElementById("host-last-seen");
 
             if (statusSpan) {
                 if (data.is_online) {
-                    statusSpan.style.color = "#27ae60"; // Zielony
+                    statusSpan.style.color = "#27ae60";
                     statusSpan.innerText = "(Online)";
                 } else {
-                    statusSpan.style.color = "#c0392b"; // Czerwony
+                    statusSpan.style.color = "#c0392b";
                     statusSpan.innerText = "(Offline)";
                 }
             }
-            if (lastSeenSpan) {
-                lastSeenSpan.innerText = data.last_seen;
-            }
+            if (lastSeenSpan) lastSeenSpan.innerText = data.last_seen;
         });
 
-        // 2. Nowe logi
         socket.on('new_log', function(data) {
             var tableBody = document.querySelector("#logs-table tbody");
+            if (!tableBody) return;
+
             var row = tableBody.insertRow(0);
-            
-            // Animacja podświetlenia nowego wiersza
             row.style.backgroundColor = "#fff3cd";
             setTimeout(() => { row.style.transition = "background 1s"; row.style.backgroundColor = "transparent"; }, 500);
 
@@ -51,16 +41,17 @@
             if(data.severity === 'critical') color = 'red';
             else if(data.severity === 'warning') color = 'orange';
 
+            // Safe handling for null messages
+            var safeMessage = (data.message || "").substring(0, 120);
+
             row.innerHTML = `
                 <td>${data.timestamp}</td>
                 <td>${data.program}</td>
-                <td style="font-family: monospace; font-size: 0.9em;">${data.message.substring(0, 120)}...</td>
+                <td style="font-family: monospace; font-size: 0.9em;">${safeMessage}...</td>
                 <td style="color: ${color}">${data.severity}</td>
             `;
 
-            if(tableBody.rows.length > 50) {
-                tableBody.deleteRow(50);
-            }
+            if(tableBody.rows.length > 50) tableBody.deleteRow(50);
         });
     });
 </script>
@@ -74,14 +65,11 @@
     <span id="host-status" style="font-size: 0.6em; vertical-align: middle; color: {{ '#27ae60' if host.is_online else '#c0392b' }}">
         {{ '(Online)' if host.is_online else '(Offline)' }}
     </span>
-
 </h2>
-<p>IP: {{ host.ip_address }} | Last Seen: {{ host.last_heartbeat.strftime('%Y-%m-%d %H:%M:%S') }}</p>
+<p>IP: {{ host.ip_address }} | Last Seen: <span id="host-last-seen">{{ host.last_heartbeat.strftime('%Y-%m-%d %H:%M:%S') }}</span></p>
 
 <div class="card">
     <h3>Audit Rules Configuration</h3>
-    <p>Agenci pobiorą te zmiany przy następnym <i>heartbeat</i> (max 5s).</p>
-    
     <table>
         <thead>
             <tr>

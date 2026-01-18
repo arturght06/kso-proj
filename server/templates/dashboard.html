@@ -6,17 +6,14 @@
     document.addEventListener("DOMContentLoaded", function() {
         var socket = io();
 
-        // 1. Gdy połączenie zostanie nawiązane, żądamy uruchomienia streamu
         socket.on('connect', function() {
-            console.log("Connected via WebSockets. Requesting stream...");
+            console.log("Connected to Dashboard. Requesting ALL streams.");
+            // Send empty object -> Request ALL logs
             socket.emit('start_monitoring', {});
         });
 
-        // 2. Odbieranie statusu hosta (bez zmian)
+        // 1. Host Status Updates
         socket.on('host_status_update', function(data) {
-            // ... (twój kod bez zmian)
-             console.log("Status update:", data);
-            
             var statusSpan = document.getElementById("status-" + data.host_id);
             var lastSeenCell = document.getElementById("last-seen-" + data.host_id);
 
@@ -34,23 +31,29 @@
             }
         });
 
-        // 3. Odbieranie nowych logów (bez zmian)
+        // 2. New Log Updates
         socket.on('new_log', function(data) {
-            // ... (twój kod bez zmian)
-            console.log("New log:", data);
             var tableBody = document.querySelector("#logs-table tbody");
-            
+            if (!tableBody) return; // Safety check
+
             var row = tableBody.insertRow(0);
             
+            // Highlight animation
+            row.style.backgroundColor = "#e8f5e9";
+            setTimeout(() => { row.style.transition = "background 1s"; row.style.backgroundColor = "transparent"; }, 500);
+
             var color = 'black';
             if(data.severity === 'critical') color = 'red';
             else if(data.severity === 'warning') color = 'orange';
+
+            // Safe message handling (handle nulls)
+            var safeMessage = (data.message || "").substring(0, 100);
 
             row.innerHTML = `
                 <td>${data.timestamp}</td>
                 <td>${data.hostname}</td>
                 <td>${data.program}</td>
-                <td>${data.message.substring(0, 100)}...</td>
+                <td style="font-family: monospace;">${safeMessage}...</td>
                 <td style="font-weight: bold; color: ${color}">${data.severity}</td>
             `;
 
@@ -84,13 +87,9 @@
                         </a>
                     </td>
                     <td>{{ host.ip_address }}</td>
-                    
-                    <td id="last-seen-{{ host.id }}">
-                        {{ host.last_heartbeat.strftime('%H:%M:%S') if host.last_heartbeat else 'Never' }}
-                    </td>
-                    
+                    <td id="last-seen-{{ host.id }}">{{ host.last_heartbeat.strftime('%Y-%m-%d %H:%M:%S') }}</td>
                     <td>
-                        <span id="status-{{ host.id }}" style="font-weight: bold; color: {{ 'green' if host.is_online else 'red' }}">
+                        <span id="status-{{ host.id }}" style="color: {{ 'green' if host.is_online else 'red' }}">
                             {{ 'Online' if host.is_online else 'Offline' }}
                         </span>
                     </td>
@@ -116,24 +115,18 @@
             </tr>
         </thead>
         <tbody>
-            {% if logs %}
-                {% for log in logs %}
-                <tr>
-                    <td>{{ log.timestamp.strftime('%H:%M:%S') }}</td>
-                    <td>{{ log.host.hostname }}</td>
-                    <td>{{ log.program }}</td>
-                    <td>{{ log.message[:100] }}...</td>
-                    <td style="font-weight: bold; color: {{ 'red' if log.severity.value == 'critical' else 'orange' if log.severity.value == 'warning' else 'black' }}">
-                        {{ log.severity.value }}
-                    </td>
-                </tr>
-                {% endfor %}
-            {% else %}
-                {% endif %}
+            {% for log in logs %}
+            <tr>
+                <td>{{ log.timestamp.strftime('%H:%M:%S') }}</td>
+                <td>{{ log.host.hostname }}</td>
+                <td>{{ log.program }}</td>
+                <td style="font-family: monospace;">{{ log.message[:100] }}...</td>
+                <td style="font-weight: bold; color: {{ 'red' if log.severity.value == 'critical' else 'orange' if log.severity.value == 'warning' else 'black' }}">
+                    {{ log.severity.value }}
+                </td>
+            </tr>
+            {% endfor %}
         </tbody>
     </table>
-    {% if not logs %}
-        <p id="no-logs-msg">No logs received yet.</p>
-    {% endif %}
 </div>
 {% endblock %}

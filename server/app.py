@@ -2,8 +2,8 @@ from flask import Flask, request, jsonify, render_template, redirect, url_for, f
 from flask_login import LoginManager, login_user, login_required, logout_user, current_user
 from flask_socketio import SocketIO, emit
 from werkzeug.security import generate_password_hash, check_password_hash
-from models import db, Host, LogEntry, MonitoringRule, User, Severity, MonitoringRule
-from datetime import datetime, timezone
+from models import db, Host, LogEntry, MonitoringRule, User, Severity
+import datetime
 import os
 from dotenv import load_dotenv
 from sqlalchemy import func
@@ -11,41 +11,46 @@ from sqlalchemy import func
 load_dotenv()
 
 app = Flask(__name__)
-
 app.secret_key = os.getenv('SECRET_KEY', 'super_secret_key_for_kso_monitor')
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'postgresql://admin:secret_kso_password@localhost:5432/kso_monitor')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
+# Increase pool size to prevent TimeoutError under load
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    "pool_size": 10,
+    "max_overflow": 20,
+    "pool_recycle": 1800,
+}
+
 db.init_app(app)
+socketio = SocketIO(app, cors_allowed_origins="*")
 
-socketio = SocketIO(app, cors_allowed_origins="*") #, async_mode='eventlet')
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = 'login'
 
+@login_manager.user_loader
+def load_user(user_id):
+    return User.query.get(int(user_id))
 
-# --- SOCKET.IO EVENTS (Endepointy Websocketowe) ---
+# --- WEBSOCKET HANDLER ---
 
 @socketio.on('connect')
 def handle_connect():
     if not current_user.is_authenticated:
         return False
     print(f"[WS] Client connected: {request.sid}")
-    # Do not start anything automatically here. Wait for client request.
 
 @socketio.on('disconnect')
 def handle_disconnect():
     print(f"[WS] Client disconnected: {request.sid}")
-    # Disconnect will automatically break the loop in start_monitoring (on emit error)
 
 @socketio.on('start_monitoring')
 def handle_start_monitoring(data=None):
-    """
-    Endpoint strumieniowania. 
-    Jeśli data={'host_id': 123}, filtruje logi tylko dla tego hosta.
-    Jeśli data jest puste, wysyła wszystko (dla dashboardu).
-    """
     user_sid = request.sid
     target_host_id = None
     
-    # Sprawdzamy, czy klient prosi o konkretnego hosta
+    # Check if client wants specific host logs
     if data and 'host_id' in data:
         try:
             target_host_id = int(data['host_id'])
@@ -55,7 +60,6 @@ def handle_start_monitoring(data=None):
     else:
         print(f"[WS] Client {user_sid} monitoring ALL HOSTS")
 
-    # Pobranie kursora początkowego
     client_log_cursor = 0
     with app.app_context():
         max_id = db.session.query(func.max(LogEntry.id)).scalar()
@@ -65,16 +69,12 @@ def handle_start_monitoring(data=None):
 
     while True:
         try:
-            # OTWIERAMY KONTEKST W PĘTLI (zapobiega TimeoutError)
             with app.app_context():
-                # --- A. STATUS HOSTÓW ---
-                # Sprawdzamy status wszystkich hostów (lub tylko tego jednego)
-                # Dla uproszczenia sprawdzamy wszystkie, bo narzut jest mały
+                # 1. Host Status
                 hosts = Host.query.all()
                 now = datetime.datetime.now(datetime.timezone.utc)
 
                 for host in hosts:
-                    # Obliczanie statusu
                     is_online = False
                     if host.last_heartbeat:
                         last_hb = host.last_heartbeat
@@ -83,11 +83,9 @@ def handle_start_monitoring(data=None):
                         delta = (now - last_hb).total_seconds()
                         is_online = delta < 60
                     
-                    # Sprawdź zmianę stanu
                     prev_state = client_host_cache.get(host.id)
                     if prev_state is None or prev_state != is_online:
-                        # Jeśli monitorujemy konkretnego hosta, wysyłamy update tylko dla niego
-                        # LUB jeśli monitorujemy wszystko (dashboard)
+                        # Send if global dashboard OR specific host match
                         if target_host_id is None or target_host_id == host.id:
                             socketio.emit('host_status_update', {
                                 'host_id': host.id,
@@ -95,13 +93,10 @@ def handle_start_monitoring(data=None):
                                 'is_online': is_online,
                                 'last_seen': host.last_heartbeat.strftime('%Y-%m-%d %H:%M:%S') if host.last_heartbeat else "Never"
                             }, room=user_sid)
-                        
                         client_host_cache[host.id] = is_online
 
-                # --- B. NOWE LOGI ---
+                # 2. New Logs
                 query = LogEntry.query.filter(LogEntry.id > client_log_cursor)
-                
-                # KLUCZOWA ZMIANA: Filtracja po hoście, jeśli wymagana
                 if target_host_id:
                     query = query.filter_by(host_id=target_host_id)
                 
@@ -113,29 +108,22 @@ def handle_start_monitoring(data=None):
                             'timestamp': log.timestamp.strftime('%H:%M:%S'),
                             'hostname': log.host.hostname,
                             'program': log.program,
-                            'message': log.message,
+                            'message': log.message or "", # Handle None/Null messages safely
                             'severity': log.severity.value
                         }
                         socketio.emit('new_log', payload, room=user_sid)
                         client_log_cursor = log.id
 
-            # Zamknięcie sesji DB następuje automatycznie po wyjściu z `with`
+                # CRITICAL: Force session cleanup to see new data in next iteration
+                db.session.remove()
+
             socketio.sleep(2)
 
         except Exception as e:
-            print(f"[WS] Loop stopped for {user_sid}: {e}")
+            print(f"[WS] Error for {user_sid}: {e}")
+            with app.app_context():
+                db.session.remove()
             break
-
-
-
-# --- SETUP LOGIN MANAGER ---
-login_manager = LoginManager()
-login_manager.init_app(app)
-login_manager.login_view = 'login'
-
-@login_manager.user_loader
-def load_user(user_id):
-    return User.query.get(int(user_id))
 
 # --- ROUTES ---
 
@@ -143,19 +131,14 @@ def load_user(user_id):
 def login():
     if current_user.is_authenticated:
         return redirect(url_for('dashboard'))
-
     if request.method == 'POST':
         username = request.form.get('username')
         password = request.form.get('password')
-        
         user = User.query.filter_by(username=username).first()
-        
         if user and user.check_password(password):
             login_user(user)
             return redirect(url_for('dashboard'))
-        
         flash('Invalid username or password')
-
     return render_template('login.html')
 
 @app.route('/')
@@ -171,8 +154,6 @@ def logout():
     logout_user()
     return redirect(url_for('login'))
 
-
-
 @app.route('/host/<int:host_id>')
 @login_required
 def host_details(host_id):
@@ -186,7 +167,6 @@ def host_details(host_id):
             (LogEntry.program.ilike(f'%{search_query}%'))
         )
     
-    # last 50 logs for this host
     logs = query.order_by(LogEntry.timestamp.desc()).limit(50).all()
     return render_template('host_details.html', host=host, logs=logs, search_query=search_query)
 
@@ -194,25 +174,21 @@ def host_details(host_id):
 @login_required
 def add_rule_to_host(host_id):
     host = Host.query.get_or_404(host_id)
-    
     path = request.form.get('path')
     permissions = request.form.get('permissions')
     key = request.form.get('key_label')
     
-    # check if rule already exists
     rule = MonitoringRule.query.filter_by(path=path, permissions=permissions, key_label=key).first()
-    
     if not rule:
         rule = MonitoringRule(path=path, permissions=permissions, key_label=key)
         db.session.add(rule)
     
-    # associate rule with host
     if rule not in host.rules:
         host.rules.append(rule)
         db.session.commit()
-        flash('Rule added successfully. Agent will sync shortly.', 'success')
+        flash('Rule added.', 'success')
     else:
-        flash('Rule already active on this host.', 'info')
+        flash('Rule already active.', 'info')
         
     return redirect(url_for('host_details', host_id=host_id))
 
@@ -221,16 +197,12 @@ def add_rule_to_host(host_id):
 def delete_rule_from_host(host_id, rule_id):
     host = Host.query.get_or_404(host_id)
     rule = MonitoringRule.query.get_or_404(rule_id)
-    
     if rule in host.rules:
         host.rules.remove(rule)
         db.session.commit()
-        flash('Rule removed. Agent will stop tracking this path.', 'warning')
-        
+        flash('Rule removed.', 'warning')
     return redirect(url_for('host_details', host_id=host_id))
 
-
-
 if __name__ == '__main__':
-    print("Starting Web Interface on port 5000...")
-    app.run(host='0.0.0.0', port=5002, debug=True)
+    print("Starting Web Interface on port 5002...")
+    socketio.run(app, host='0.0.0.0', port=5002, debug=True, allow_unsafe_werkzeug=True)
