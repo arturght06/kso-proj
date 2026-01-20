@@ -82,17 +82,11 @@ def parse_and_save_log(raw_data):
         hostname = parts[0]
         message = parts[1]
         
-        # --- NOWE FILTROWANIE ---
-        # 1. Jeśli wiadomość nie zawiera "key=", to nie jest to log z naszej reguły auditd.
-        #    To eliminuje szum systemowy (cron, systemd, sshd itp.)
         if 'key=' not in message:
             return
 
-        # 2. Ignorujemy logi techniczne auditd (np. CONFIG_CHANGE, DAEMON_START)
-        #    Interesują nas tylko wywołania systemowe (SYSCALL) i uruchamianie plików (EXECVE)
         if 'type=SYSCALL' not in message and 'type=EXECVE' not in message:
              return
-        # ------------------------
         
         # Wyciąganie klucza
         key_match = re.search(r'key="?(\w+)"?', message)
@@ -109,8 +103,6 @@ def parse_and_save_log(raw_data):
         with app.app_context():
             host = Host.query.filter_by(hostname=hostname).first()
             if not host:
-                # Opcjonalnie: Auto-rejestracja hosta jeśli nieznany (dla wygody)
-                # print(f"[Syslog] Ignored log from unknown host: {hostname}")
                 return
 
             details = {
@@ -135,49 +127,10 @@ def parse_and_save_log(raw_data):
     except Exception as e:
         print(f"[Syslog Error] {e}")
 
-def syslog_server():
-    HOST = '127.0.0.1'
-    PORT = 9999
-    
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        # ZMIANA 1: Pozwala na restart serwera bez błędu "Address already in use"
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        
-        try:
-            s.bind((HOST, PORT))
-        except OSError as e:
-            print(f"[Syslog] CRITICAL: Port {PORT} is busy. {e}")
-            return
-
-        s.listen()
-        print(f"[Syslog Listener] Listening on {HOST}:{PORT}")
-        
-        while True:
-            try:
-                conn, addr = s.accept()
-                with conn:
-                    buffer = ""
-                    while True:
-                        data = conn.recv(1024)
-                        if not data:
-                            break
-                        buffer += data.decode('utf-8', errors='ignore')
-                        while '\n' in buffer:
-                            line, buffer = buffer.split('\n', 1)
-                            if line:
-                                parse_and_save_log(line)
-            except Exception as e:
-                print(f"[Syslog Loop Error] {e}")
 
 if __name__ == '__main__':
     with app.app_context():
         db.create_all()
         seed_data()
-    
-    # ZMIANA 2: Uruchamiamy wątek TYLKO w procesie workera (po przeładowaniu), 
-    # a nie w głównym procesie nadzorczym. To eliminuje podwójne uruchomienie.
-    if os.environ.get("WERKZEUG_RUN_MAIN") == "true":
-        threading.Thread(target=syslog_server, daemon=True).start()
-    
-    # Jeśli uruchamiasz bez debug=True, musisz usunąć powyższy warunek if
+
     app.run(host='0.0.0.0', port=5555, debug=True)
